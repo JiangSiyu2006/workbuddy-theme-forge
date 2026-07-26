@@ -44,7 +44,11 @@ WorkBuddy 需以 `--remote-debugging-port=<port>` 启动，或设置 `WORKBUDDY_
 
 ## 参考与致谢
 
-实现吸收了 `.reference-cache` 中三个项目关于 CDP target 发现、幂等 style 注入、主题 schema、Windows 启动与诊断的设计思想，但代码、文案和内置主题均为独立实现，没有复制其源码、图片或商业 IP 素材。
+实现吸收了 [Codex-Dream-Skin]、[heige-codex-skin-studio]和[workbuddy-skin-studio]三个项目关于 CDP target 发现、幂等 style 注入、主题 schema、Windows 启动与诊断的设计思想，但代码、文案和内置主题均为独立实现，没有复制其源码、图片或商业 IP 素材。
 
 更多信息见：`docs/architecture.md`、`docs/theme-format.md`、`docs/legal-boundaries.md`、`CONTRIBUTING.md`、`SECURITY.md`。
+
+[Codex-Dream-Skin]: https://github.com/Fei-Away/Codex-Dream-Skin
+[heige-codex-skin-studio]: https://github.com/HeiGeAi/heige-codex-skin-studio
+[workbuddy-skin-studio]: https://github.com/cdredfox/workbuddy-skin-studio
 
