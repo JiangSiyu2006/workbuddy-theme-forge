@@ -1,0 +1,5 @@
+node_modules/
+.wb-theme-forge/
+*.log
+dist/
+.reference-cache/

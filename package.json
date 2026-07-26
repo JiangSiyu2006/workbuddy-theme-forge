@@ -1,0 +1,16 @@
+{
+  "name": "workbuddy-theme-forge",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A reversible, non-invasive WorkBuddy theme engine over local Chromium CDP.",
+  "type": "module",
+  "bin": { "wb-theme": "./src/cli.mjs" },
+  "scripts": {
+    "start:editor": "node apps/editor/server.mjs",
+    "test": "node --test",
+    "lint": "node --check src/cli.mjs && node --check apps/editor/server.mjs",
+    "doctor": "node src/cli.mjs doctor"
+  },
+  "engines": { "node": ">=20" },
+  "license": "MIT"
+}

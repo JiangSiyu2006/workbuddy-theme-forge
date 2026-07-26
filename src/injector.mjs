@@ -1,0 +1,8 @@
+import { STYLE_ID } from "./constants.mjs";
+import { themeToCss } from "./theme-schema.mjs";
+
+const snapshotExpression = `(() => { const el = document.getElementById(${JSON.stringify(STYLE_ID)}); return { hadStyle: Boolean(el), css: el?.textContent || "", attr: document.documentElement.getAttribute("data-wb-theme-forge") }; })()`;
+export async function snapshot(session) { return session.evaluate(snapshotExpression); }
+export async function inject(session, theme, { assetUrl = "" } = {}) { const css = themeToCss(theme.manifest || theme, assetUrl); const expression = `(() => { let el = document.getElementById(${JSON.stringify(STYLE_ID)}); if (!el) { el = document.createElement("style"); el.id = ${JSON.stringify(STYLE_ID)}; document.head.appendChild(el); } el.textContent = ${JSON.stringify(css)}; document.documentElement.setAttribute("data-wb-theme-forge", ${JSON.stringify(theme.manifest?.id || theme.id)}); return { id: el.id, bytes: el.textContent.length }; })()`; return session.evaluate(expression); }
+export async function restore(session) { return session.evaluate(`(() => { const el = document.getElementById(${JSON.stringify(STYLE_ID)}); el?.remove(); document.documentElement.removeAttribute("data-wb-theme-forge"); return { restored: true }; })()`); }
+export async function rollback(session, state) { if (!state?.hadStyle) return restore(session); return session.evaluate(`(() => { let el=document.getElementById(${JSON.stringify(STYLE_ID)}); if(!el){el=document.createElement("style");el.id=${JSON.stringify(STYLE_ID)};document.head.appendChild(el);} el.textContent=${JSON.stringify(state.css || "")}; document.documentElement.setAttribute("data-wb-theme-forge", ${JSON.stringify(state.attr || "")}); return {rolledBack:true}; })()`); }

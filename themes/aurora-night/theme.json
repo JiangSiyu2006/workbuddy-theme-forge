@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "id": "aurora-night",
+  "name": "Aurora Night",
+  "author": "WorkBuddy Theme Forge",
+  "license": "CC0-1.0",
+  "workbuddy": { "minVersion": "4.22.0", "maxVersion": null },
+  "colors": { "primary": "#7C5CFF", "secondary": "#35D0BA", "background": "#101323", "surface": "#171C31", "text": "#F5F7FF", "border": "#303953", "error": "#FF6B7A", "warning": "#FFBF69", "success": "#58E6A8" },
+  "variables": { "radius": 12, "shadow": "0 18px 40px rgba(0,0,0,.28)", "blur": 18, "fontSize": 14, "lineHeight": 1.5, "animation": true, "animationSpeed": 1 },
+  "selectors": { "topbar": "header, [data-view-id='titlebar']", "sidebar": "aside, [data-view-id='sidebar']", "chat": "main, [data-view-id='conversation']", "input": "textarea, [contenteditable='true']", "code": "pre, code", "panel": "[role='dialog'], [data-view-id='panel']" },
+  "assets": {},
+  "reducedMotion": { "enabled": false }
+}
