@@ -1,15 +1,25 @@
 # Architecture
 
 ```text
-CLI / local editor
-        |
-theme-store <-> theme-schema <-> themeToCss
-        |
-cdp-client -> injector -> WorkBuddy renderer
-        |
-daemon + state/snapshot + diagnostics + adapters
+CLI / local control server / PowerShell launcher
+                    |
+                 runtime
+          /---------+---------\
+ theme-store     diagnostics   daemon
+      |              |          |
+ theme-schema -- adapters -- cdp-client
+      |                         |
+ theme-assets ----------- injector
+                    |
+             WorkBuddy renderer(s)
 ```
 
-`cdp-client` 负责回环地址校验、target 过滤、超时和 WebSocket 命令匹配；`injector` 只维护一个固定 style id，保证重复注入幂等；`theme-store` 负责主题目录、`.wbtheme` ZIP 容器和路径安全；`adapters` 保存不同 WorkBuddy 版本的 selector/变量契约；`daemon` 只做重注入，不干预 WorkBuddy 生命周期。
+- `cdp-client` 仅连接 `127.0.0.1`，负责 target 发现、WebSocket 命令匹配、超时和关闭。
+- `adapters` 保存版本范围、逻辑区域 selector 和变量契约；`adapter-535` 是 v0.2.0 的正式支持基线。
+- `injector` 负责预检、CSS 编译、外观快照、哈希验证、恢复和回滚。
+- `theme-assets` 校验图片和安全 CSS，并将主题包内图片转为 renderer 可用的 data URL。
+- `theme-store` 管理内置/用户主题、标准 ZIP、冲突策略和原子写入。
+- `runtime` 为 CLI 和控制台提供一致的多 renderer 操作。
+- `daemon` 检查主题 ID 和 CSS 哈希，刷新或样式丢失时重新注入。
 
-MVP 使用本地 Web 编辑器，未来可以把同一 API 封装进 Electron tray shell。
+控制台与守护存在于同一 Node.js 进程。关闭控制台即停止守护，不创建系统服务、托盘或计划任务。
