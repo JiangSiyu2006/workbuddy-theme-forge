@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "id": "aurora-dawn",
+  "name": "Aurora Dawn",
+  "appearance": "light",
+  "author": "WorkBuddy Theme Forge",
+  "license": "CC0-1.0",
+  "workbuddy": { "minVersion": "5.3.0", "maxVersion": "5.3.999" },
+  "colors": {
+    "primary": "#5967C5",
+    "secondary": "#397F7B",
+    "background": "#F4F6FA",
+    "surface": "#FFFFFF",
+    "text": "#20232B",
+    "border": "#D8DDE8",
+    "error": "#B94755",
+    "warning": "#8A6421",
+    "success": "#287452"
+  },
+  "variables": {
+    "radius": 10,
+    "shadow": "0 8px 24px rgba(35,43,67,.10)",
+    "blur": 8,
+    "fontFamily": "Inter, Segoe UI, sans-serif",
+    "fontSize": 14,
+    "lineHeight": 1.5,
+    "animation": true,
+    "animationSpeed": 1
+  },
+  "selectors": {
+    "topbar": ".sidebar-next-main-header, header",
+    "sidebar": "[data-view-id='sidebar'], .conversation-sidebar",
+    "chat": "[data-view-id='main-content'], .teams-main-content, .chat-container",
+    "input": "[contenteditable='true'], [role='textbox']",
+    "code": "pre, code",
+    "panel": "[data-view-id$='-panel'], [role='dialog']"
+  },
+  "assets": {},
+  "background": {
+    "fit": "cover", "zoom": 1, "positionX": 50, "positionY": 50,
+    "opacity": 1, "blur": 0, "overlayColor": "#FFFFFF", "overlayOpacity": 0, "vignette": 0
+  },
+  "reducedMotion": { "enabled": false }
+}
