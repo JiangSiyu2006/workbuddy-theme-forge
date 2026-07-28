@@ -1,5 +1,8 @@
 node_modules/
 .wb-theme-forge/
+node_modules/
+.npm-cache/
+.test-tmp/
 *.log
 dist/
 .reference-cache/
