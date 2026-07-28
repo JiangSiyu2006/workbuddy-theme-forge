@@ -2,4 +2,21 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { inject } from "../src/injector.mjs";
 import { defaultTheme } from "../src/theme-schema.mjs";
-test("inject expression is idempotent", async () => { let expression=""; const session={evaluate:async(value)=>{expression=value;return {}}}; await inject(session,{manifest:defaultTheme()}); assert.match(expression,/wb-theme-forge-style/); assert.equal((expression.match(/createElement/g)||[]).length,1); });
+
+test("inject preflights WorkBuddy 5.3 and verifies an idempotent style", async () => {
+  let injectionExpression = ""; let injection;
+  const session = { evaluate: async (expression) => {
+    if (expression.includes("const regions=")) return Object.fromEntries(["root", "sidebar", "main", "chat", "topbar", "input", "panel"].map((name) => [name, { hit: true, selectors: {} }]));
+    if (expression.includes("let el=document.getElementById")) {
+      injectionExpression = expression;
+      const hash = expression.match(/el\.dataset\.hash=("[a-f0-9]+")/)?.[1];
+      injection = { themeId: "aurora-night", hash: JSON.parse(hash), adapterId: "adapter-535", bytes: 100 };
+      return injection;
+    }
+    return { version: "5.3.5", injection, appearance: {}, variables: {}, styles: 1 };
+  } };
+  const result = await inject(session, { manifest: defaultTheme({ workbuddy: { minVersion: "5.3.0", maxVersion: null } }), css: "" });
+  assert.equal(result.adapterId, "adapter-535");
+  assert.match(injectionExpression, /wb-theme-forge-style/);
+  assert.equal((injectionExpression.match(/createElement/g) || []).length, 1);
+});
