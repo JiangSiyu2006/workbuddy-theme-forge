@@ -2,12 +2,43 @@
   "schemaVersion": 1,
   "id": "aurora-night",
   "name": "Aurora Night",
+  "appearance": "dark",
   "author": "WorkBuddy Theme Forge",
   "license": "CC0-1.0",
-  "workbuddy": { "minVersion": "4.22.0", "maxVersion": null },
-  "colors": { "primary": "#7C5CFF", "secondary": "#35D0BA", "background": "#101323", "surface": "#171C31", "text": "#F5F7FF", "border": "#303953", "error": "#FF6B7A", "warning": "#FFBF69", "success": "#58E6A8" },
-  "variables": { "radius": 12, "shadow": "0 18px 40px rgba(0,0,0,.28)", "blur": 18, "fontSize": 14, "lineHeight": 1.5, "animation": true, "animationSpeed": 1 },
-  "selectors": { "topbar": "header, [data-view-id='titlebar']", "sidebar": "aside, [data-view-id='sidebar']", "chat": "main, [data-view-id='conversation']", "input": "textarea, [contenteditable='true']", "code": "pre, code", "panel": "[role='dialog'], [data-view-id='panel']" },
+  "workbuddy": { "minVersion": "5.3.0", "maxVersion": "5.3.999" },
+  "colors": {
+    "primary": "#7783D8",
+    "secondary": "#65AAA5",
+    "background": "#17191F",
+    "surface": "#20232B",
+    "text": "#F2F3F7",
+    "border": "#343945",
+    "error": "#E66B75",
+    "warning": "#D6A34A",
+    "success": "#55B887"
+  },
+  "variables": {
+    "radius": 10,
+    "shadow": "0 8px 24px rgba(0,0,0,.18)",
+    "blur": 10,
+    "fontFamily": "Inter, Segoe UI, sans-serif",
+    "fontSize": 14,
+    "lineHeight": 1.5,
+    "animation": true,
+    "animationSpeed": 1
+  },
+  "selectors": {
+    "topbar": ".sidebar-next-main-header, header",
+    "sidebar": "[data-view-id='sidebar'], .conversation-sidebar",
+    "chat": "[data-view-id='main-content'], .teams-main-content, .chat-container",
+    "input": "[contenteditable='true'], [role='textbox']",
+    "code": "pre, code",
+    "panel": "[data-view-id$='-panel'], [role='dialog']"
+  },
   "assets": {},
+  "background": {
+    "fit": "cover", "zoom": 1, "positionX": 50, "positionY": 50,
+    "opacity": 1, "blur": 0, "overlayColor": "#000000", "overlayOpacity": 0, "vignette": 0
+  },
   "reducedMotion": { "enabled": false }
 }
