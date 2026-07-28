@@ -10,6 +10,28 @@
 
 - 预留下一版本的变更记录区域。
 
+## [0.2.0] - 2026-07-27
+
+### Added
+
+- WorkBuddy 5.3.x adapter、逻辑区域诊断、深浅外观同步和多 renderer 注入。
+- 本地 Web 控制台、会话令牌防护、Windows 确认式启动器和进程内守护。
+- `resume`、`duplicate`、`logs`、`serve` 与 `apply --force` CLI 能力。
+- 图片背景控制、安全 CSS、标准 ZIP store/deflate、资源限制和冲突策略。
+- `Aurora Dawn` 浅色主题以及重做的 `Aurora Night` 深色主题。
+- mock CDP、状态迁移、控制台、主题包、CSS、图片和启动器测试。
+
+### Changed
+
+- 主题状态明确为 `active`、`paused` 和 `native`，暂停不再丢失主题选择。
+- 守护通过主题 ID 和 CSS 哈希检测刷新、样式丢失及新 renderer。
+- 状态、快照和主题使用原子写入；内置主题不可覆盖、编辑或删除。
+
+### Security
+
+- 主题包拒绝路径穿越、链接、重复路径、嵌套压缩包、未登记文件和过量解压数据。
+- 自定义 CSS 禁止外部资源和危险 at-rule，并限制在当前激活主题作用域。
+
 ## [0.1.0] - 2026-07-25
 
 首个可运行 MVP，适合作为 GitHub 仓库初始版本。
@@ -32,4 +54,5 @@
 - 图片自动取色、复杂裁剪和完整版本命中率诊断尚未完成。
 
 [Unreleased]: https://github.com/JiangSiyu2006/workbuddy-theme-forge/compare/v0.1.0...HEAD
+[0.2.0]: https://github.com/JiangSiyu2006/workbuddy-theme-forge/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/JiangSiyu2006/workbuddy-theme-forge/releases/tag/v0.1.0
