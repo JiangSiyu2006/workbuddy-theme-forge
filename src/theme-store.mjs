@@ -1,23 +1,311 @@
-import { mkdir, readdir, readFile, rm, writeFile, stat } from "node:fs/promises";
-import { basename, join, resolve } from "node:path";
+import { createReadStream } from "node:fs";
+import { cp, mkdir, readdir, readFile, rename, rm, stat } from "node:fs/promises";
+import { basename, dirname, extname, join, posix, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { getForgeHome } from "./constants.mjs";
+import { promisify } from "node:util";
+import { randomUUID } from "node:crypto";
+import yauzl from "yauzl";
+import yazl from "yazl";
+import { getForgeHome, MAX_EXPANDED_BYTES, MAX_PACKAGE_BYTES, MAX_PACKAGE_ENTRIES, THEME_ID } from "./constants.mjs";
+import { atomicWrite } from "./files.mjs";
 import { defaultTheme, validateThemeManifest, themeToCss } from "./theme-schema.mjs";
+import { loadImageAsset, validateCustomCss, validateImageBytes } from "./theme-assets.mjs";
 
 const builtinRoot = fileURLToPath(new URL("../themes", import.meta.url));
-const maxPackageBytes = 32 * 1024 * 1024;
+const openZip = promisify(yauzl.fromBuffer);
 
-async function ensureDirs() { const home = getForgeHome(); await mkdir(join(home, "themes"), { recursive: true }); await mkdir(join(home, "snapshots"), { recursive: true }); return home; }
-async function readThemeDir(dir) { const raw = JSON.parse(await readFile(join(dir, "theme.json"), "utf8")); const manifest = validateThemeManifest(raw); const cssPath = join(dir, "theme.css"); const css = await readFile(cssPath, "utf8").catch(() => themeToCss(manifest)); return { manifest, dir, css }; }
-export async function listThemes() { const home = await ensureDirs(); const result = []; for (const root of [builtinRoot, join(home, "themes")]) { for (const entry of await readdir(root, { withFileTypes: true }).catch(() => [])) if (entry.isDirectory()) { try { result.push(await readThemeDir(join(root, entry.name))); } catch { /* skip malformed theme */ } } } return result.filter((x, i, all) => all.findIndex((y) => y.manifest.id === x.manifest.id) === i); }
-export async function getTheme(id) { const theme = (await listThemes()).find((x) => x.manifest.id === id); if (!theme) throw new Error(`theme not found: ${id}`); return theme; }
-export async function saveTheme(manifest, css = "") { const normalized = validateThemeManifest(manifest); const home = await ensureDirs(); const dir = join(home, "themes", normalized.id); await mkdir(dir, { recursive: true }); await writeFile(join(dir, "theme.json"), JSON.stringify(normalized, null, 2)); await writeFile(join(dir, "theme.css"), css || themeToCss(normalized)); return readThemeDir(dir); }
-export async function deleteTheme(id) { const home = await ensureDirs(); const dir = join(home, "themes", id); if (resolve(dir).startsWith(resolve(builtinRoot))) throw new Error("built-in themes cannot be deleted"); await rm(dir, { recursive: true, force: false }); }
-export async function createTheme({ image, name }) { const id = name.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || `theme-${Date.now()}`; const ext = basename(image).slice(basename(image).lastIndexOf(".")); if (!/[.](png|jpe?g|webp)$/i.test(ext)) throw new Error("image must be PNG, JPEG, or WebP"); const manifest = defaultTheme({ id, name, assets: { background: `background${ext.toLowerCase()}` } }); const home = await ensureDirs(); const dir = join(home, "themes", id); await mkdir(dir, { recursive: true }); await writeFile(join(dir, "theme.json"), JSON.stringify(manifest, null, 2)); await writeFile(join(dir, "theme.css"), themeToCss(manifest, `background${ext.toLowerCase()}`)); const bytes = await readFile(image); if (bytes.byteLength > maxPackageBytes) throw new Error("image is too large"); await writeFile(join(dir, `background${ext.toLowerCase()}`), bytes); return readThemeDir(dir); }
+async function ensureDirs() {
+  const home = getForgeHome();
+  await mkdir(join(home, "themes"), { recursive: true });
+  await mkdir(join(home, "snapshots"), { recursive: true });
+  return home;
+}
 
-function crc32(buf) { let crc = 0xffffffff; for (const byte of buf) { crc ^= byte; for (let i = 0; i < 8; i++) crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1)); } return (crc ^ 0xffffffff) >>> 0; }
-function zip(entries) { const chunks = [], central = []; let offset = 0; for (const [name, data] of entries) { const n = Buffer.from(name), d = Buffer.isBuffer(data) ? data : Buffer.from(data); const h = Buffer.alloc(30 + n.length); h.writeUInt32LE(0x04034b50, 0); h.writeUInt16LE(20, 4); h.writeUInt16LE(0, 6); h.writeUInt16LE(0, 8); h.writeUInt32LE(crc32(d), 14); h.writeUInt32LE(d.length, 18); h.writeUInt32LE(d.length, 22); h.writeUInt16LE(n.length, 26); n.copy(h, 30); chunks.push(h, d); const c = Buffer.alloc(46 + n.length); c.writeUInt32LE(0x02014b50, 0); c.writeUInt16LE(20, 4); c.writeUInt16LE(20, 6); c.writeUInt32LE(crc32(d), 16); c.writeUInt32LE(d.length, 20); c.writeUInt32LE(d.length, 24); c.writeUInt16LE(n.length, 28); c.writeUInt32LE(offset, 42); n.copy(c, 46); central.push(c); offset += h.length + d.length; } const directory = Buffer.concat(central); const end = Buffer.alloc(22); end.writeUInt32LE(0x06054b50, 0); end.writeUInt16LE(entries.length, 8); end.writeUInt16LE(entries.length, 10); end.writeUInt32LE(directory.length, 12); end.writeUInt32LE(offset, 16); return Buffer.concat([...chunks, directory, end]); }
-function unzip(buffer) { const out = new Map(); let p = 0; while (p + 4 <= buffer.length && buffer.readUInt32LE(p) === 0x04034b50) { const nameLen = buffer.readUInt16LE(p + 26), extraLen = buffer.readUInt16LE(p + 28), size = buffer.readUInt32LE(p + 22); const name = buffer.toString("utf8", p + 30, p + 30 + nameLen); if (name.includes("..") || name.startsWith("/") || name.startsWith("\\")) throw new Error("theme package contains unsafe path"); const start = p + 30 + nameLen + extraLen; out.set(name, buffer.subarray(start, start + size)); p = start + size; } if (!out.has("theme.json")) throw new Error("theme package missing theme.json"); return out; }
-export async function exportTheme(id, outFile) { const theme = await getTheme(id); const entries = [["theme.json", JSON.stringify(theme.manifest, null, 2)], ["theme.css", theme.css], ["LICENSE", theme.manifest.license || "CC0-1.0"]]; for (const asset of Object.values(theme.manifest.assets)) { try { entries.push([`assets/${basename(asset)}`, await readFile(join(theme.dir, asset))]); } catch { /* optional asset */ } } await writeFile(outFile, zip(entries)); return outFile; }
-export async function importTheme(file) { const bytes = await readFile(file); if (bytes.byteLength > maxPackageBytes) throw new Error("theme package exceeds 32 MiB"); const entries = unzip(bytes); const manifest = validateThemeManifest(JSON.parse(entries.get("theme.json").toString("utf8"))); const home = await ensureDirs(); const dir = join(home, "themes", manifest.id); await mkdir(dir, { recursive: true }); await writeFile(join(dir, "theme.json"), JSON.stringify(manifest, null, 2)); await writeFile(join(dir, "theme.css"), entries.get("theme.css") || themeToCss(manifest)); for (const [name, data] of entries) if (name.startsWith("assets/") && name.split("/").length === 2) await writeFile(join(dir, basename(name)), data); return readThemeDir(dir); }
-export { maxPackageBytes };
+function isWithin(root, path) {
+  const value = relative(resolve(root), resolve(path));
+  return value && !value.startsWith("..") && !value.includes(":");
+}
+
+function assertThemeId(id) {
+  if (typeof id !== "string" || !THEME_ID.test(id)) throw new Error("invalid theme id");
+}
+
+async function readThemeDir(dir, source) {
+  const manifest = validateThemeManifest(JSON.parse(await readFile(join(dir, "theme.json"), "utf8")));
+  const css = await readFile(join(dir, "theme.css"), "utf8").catch(() => "");
+  validateCustomCss(css, manifest);
+  for (const asset of Object.values(manifest.assets)) await loadImageAsset(dir, asset);
+  return { manifest, dir, css, source, builtIn: source === "builtin" };
+}
+
+async function scanRoot(root, source) {
+  const themes = [];
+  for (const entry of await readdir(root, { withFileTypes: true }).catch(() => [])) {
+    if (!entry.isDirectory() || !THEME_ID.test(entry.name)) continue;
+    try { themes.push(await readThemeDir(join(root, entry.name), source)); } catch { /* malformed themes are excluded */ }
+  }
+  return themes;
+}
+
+export async function listThemes() {
+  const home = await ensureDirs();
+  const builtins = await scanRoot(builtinRoot, "builtin");
+  const users = await scanRoot(join(home, "themes"), "user");
+  return [...builtins, ...users].filter((theme, index, all) => all.findIndex((item) => item.manifest.id === theme.manifest.id) === index);
+}
+
+export async function getTheme(id) {
+  assertThemeId(id);
+  const theme = (await listThemes()).find((item) => item.manifest.id === id);
+  if (!theme) throw new Error(`theme not found: ${id}`);
+  return theme;
+}
+
+function userThemeDir(home, id) {
+  assertThemeId(id);
+  const dir = join(home, "themes", id);
+  if (!isWithin(join(home, "themes"), dir)) throw new Error("unsafe theme path");
+  return dir;
+}
+
+async function writeTheme(dir, manifest, css) {
+  await mkdir(dir, { recursive: true });
+  await atomicWrite(join(dir, "theme.json"), JSON.stringify(manifest, null, 2));
+  await atomicWrite(join(dir, "theme.css"), css || "");
+}
+
+async function commitThemeDirectory(finalDir, populate) {
+  const parent = dirname(finalDir);
+  const stage = join(parent, `.${basename(finalDir)}-${randomUUID()}.tmp`);
+  const backup = join(parent, `.${basename(finalDir)}-${randomUUID()}.bak`);
+  await mkdir(parent, { recursive: true });
+  let movedExisting = false;
+  try {
+    await mkdir(stage, { recursive: true });
+    await populate(stage);
+    await readThemeDir(stage, "user");
+    if (await stat(finalDir).then(() => true).catch(() => false)) { await rename(finalDir, backup); movedExisting = true; }
+    await rename(stage, finalDir);
+    if (movedExisting) await rm(backup, { recursive: true, force: true });
+  } catch (error) {
+    await rm(stage, { recursive: true, force: true }).catch(() => {});
+    if (movedExisting) {
+      await rm(finalDir, { recursive: true, force: true }).catch(() => {});
+      await rename(backup, finalDir).catch(() => {});
+    }
+    throw error;
+  }
+}
+
+function normalizedAssetPath(asset) {
+  const normalized = asset.replaceAll("\\", "/");
+  return normalized.startsWith("assets/") ? normalized : `assets/${basename(normalized)}`;
+}
+
+function normalizeManifestAssets(manifest) {
+  return validateThemeManifest({ ...manifest, assets: Object.fromEntries(Object.entries(manifest.assets).map(([key, asset]) => [key, normalizedAssetPath(asset)])) });
+}
+
+function remapCssAssets(css, sourceAssets, targetAssets) {
+  let output = css;
+  for (const [key, source] of Object.entries(sourceAssets)) output = output.split(source).join(targetAssets[key]);
+  return output;
+}
+
+export async function saveTheme(manifest, css = "", { allowReplace = true } = {}) {
+  let normalized = validateThemeManifest(manifest);
+  if ((await scanRoot(builtinRoot, "builtin")).some((theme) => theme.manifest.id === normalized.id)) throw new Error("built-in themes must be saved as a copy");
+  validateCustomCss(css, normalized);
+  const home = await ensureDirs();
+  const dir = userThemeDir(home, normalized.id);
+  if (!allowReplace && await stat(dir).then(() => true).catch(() => false)) throw new Error(`theme already exists: ${normalized.id}`);
+  const previous = await readThemeDir(dir, "user").catch(() => null);
+  const originalAssets = normalized.assets;
+  normalized = normalizeManifestAssets(normalized);
+  const normalizedCss = remapCssAssets(css, originalAssets, normalized.assets);
+  await commitThemeDirectory(dir, async (stage) => {
+    await writeTheme(stage, normalized, normalizedCss);
+    for (const [key, targetAsset] of Object.entries(normalized.assets)) {
+      const sourceAsset = originalAssets[key];
+      if (!previous) throw new Error(`missing existing asset: ${sourceAsset}`);
+      const target = join(stage, targetAsset); await mkdir(dirname(target), { recursive: true });
+      await cp(join(previous.dir, sourceAsset), target);
+    }
+  });
+  return readThemeDir(dir, "user");
+}
+
+export async function deleteTheme(id) {
+  assertThemeId(id);
+  if ((await scanRoot(builtinRoot, "builtin")).some((theme) => theme.manifest.id === id)) throw new Error("built-in themes cannot be deleted");
+  const home = await ensureDirs();
+  const dir = userThemeDir(home, id);
+  await rm(dir, { recursive: true, force: false });
+}
+
+function slug(name) {
+  return String(name || "").toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || `theme-${Date.now()}`;
+}
+
+async function uniqueId(base) {
+  const ids = new Set((await listThemes()).map((theme) => theme.manifest.id));
+  if (!ids.has(base)) return base;
+  for (let index = 2; index < 1000; index++) if (!ids.has(`${base}-${index}`)) return `${base}-${index}`;
+  throw new Error("unable to allocate a unique theme id");
+}
+
+export async function createTheme({ image, name }) {
+  if (!image) throw new Error("create requires --image <path>");
+  const ext = extname(image).toLowerCase();
+  const id = await uniqueId(slug(name));
+  const asset = `assets/background${ext}`;
+  const manifest = defaultTheme({ id, name: name || "Untitled Theme", assets: { background: asset }, background: { ...defaultTheme().background, overlayOpacity: .2, vignette: .15 } });
+  await loadImageAsset(dirname(image), basename(image));
+  const home = await ensureDirs();
+  const dir = userThemeDir(home, id);
+  await commitThemeDirectory(dir, async (stage) => {
+    await writeTheme(stage, manifest, "");
+    await mkdir(join(stage, "assets"), { recursive: true });
+    await atomicWrite(join(stage, asset), await readFile(image));
+  });
+  return readThemeDir(dir, "user");
+}
+
+export async function createThemeFromImage({ bytes, filename, name }) {
+  const ext = extname(filename || "").toLowerCase();
+  validateImageBytes(bytes, ext);
+  const id = await uniqueId(slug(name));
+  const asset = `assets/background${ext}`;
+  const manifest = defaultTheme({ id, name: name || "Untitled Theme", assets: { background: asset }, background: { ...defaultTheme().background, overlayOpacity: .2, vignette: .15 } });
+  const home = await ensureDirs();
+  const dir = userThemeDir(home, id);
+  await commitThemeDirectory(dir, async (stage) => {
+    await writeTheme(stage, manifest, "");
+    await mkdir(join(stage, "assets"), { recursive: true });
+    await atomicWrite(join(stage, asset), bytes);
+  });
+  return readThemeDir(dir, "user");
+}
+
+export async function duplicateTheme(id, name) {
+  const source = await getTheme(id);
+  const copyId = await uniqueId(slug(name || `${source.manifest.name} Copy`));
+  const originalManifest = validateThemeManifest({ ...source.manifest, id: copyId, name: name || `${source.manifest.name} Copy` });
+  const manifest = normalizeManifestAssets(originalManifest);
+  const home = await ensureDirs();
+  const dir = userThemeDir(home, copyId);
+  const normalizedCss = remapCssAssets(source.css, source.manifest.assets, manifest.assets);
+  await commitThemeDirectory(dir, async (stage) => {
+    await writeTheme(stage, manifest, normalizedCss);
+    for (const [key, asset] of Object.entries(manifest.assets)) {
+      const target = join(stage, asset);
+      await mkdir(dirname(target), { recursive: true });
+      await atomicWrite(target, await readFile(join(source.dir, source.manifest.assets[key])));
+    }
+  });
+  return readThemeDir(dir, "user");
+}
+
+function safeArchiveName(name) {
+  const normalized = name.replaceAll("\\", "/");
+  if (!normalized || normalized.startsWith("/") || /^[a-z]:/i.test(normalized) || normalized.split("/").includes("..") || normalized.includes("\0")) throw new Error("theme package contains an unsafe path");
+  return normalized;
+}
+
+function readEntry(zip, entry) {
+  return new Promise((resolve, reject) => zip.openReadStream(entry, (error, stream) => {
+    if (error) return reject(error);
+    const chunks = []; let size = 0;
+    stream.on("data", (chunk) => { size += chunk.length; if (size > MAX_EXPANDED_BYTES) stream.destroy(new Error("theme package expands beyond 64 MiB")); else chunks.push(chunk); });
+    stream.on("error", reject); stream.on("end", () => resolve(Buffer.concat(chunks)));
+  }));
+}
+
+async function unzip(buffer) {
+  if (!buffer.length || buffer.length > MAX_PACKAGE_BYTES) throw new Error("theme package must be between 1 byte and 32 MiB");
+  const zip = await openZip(buffer, { lazyEntries: true, decodeStrings: true, validateEntrySizes: true, strictFileNames: true });
+  const entries = new Map(); let expanded = 0; let count = 0;
+  return new Promise((resolveEntries, reject) => {
+    const fail = (error) => { try { zip.close(); } catch {} reject(error); };
+    zip.on("error", fail);
+    zip.on("entry", async (entry) => {
+      try {
+        count++;
+        if (count > MAX_PACKAGE_ENTRIES) throw new Error("theme package contains more than 64 entries");
+        const name = safeArchiveName(entry.fileName);
+        const unixMode = (entry.externalFileAttributes >>> 16) & 0xffff;
+        if ((unixMode & 0o170000) === 0o120000) throw new Error("theme package links are not allowed");
+        if (name.endsWith("/")) return zip.readEntry();
+        if (entries.has(name.toLowerCase())) throw new Error(`duplicate theme package entry: ${name}`);
+        if (/\.(?:zip|wbtheme)$/i.test(name)) throw new Error("nested archives are not allowed");
+        const data = await readEntry(zip, entry);
+        expanded += data.length;
+        if (expanded > MAX_EXPANDED_BYTES) throw new Error("theme package expands beyond 64 MiB");
+        entries.set(name.toLowerCase(), { name, data });
+        zip.readEntry();
+      } catch (error) { fail(error); }
+    });
+    zip.on("end", () => resolveEntries(entries));
+    zip.readEntry();
+  });
+}
+
+function zipBuffer(entries) {
+  return new Promise((resolveBuffer, reject) => {
+    const zip = new yazl.ZipFile(); const chunks = [];
+    zip.outputStream.on("data", (chunk) => chunks.push(chunk));
+    zip.outputStream.on("error", reject);
+    zip.outputStream.on("end", () => resolveBuffer(Buffer.concat(chunks)));
+    for (const [name, data] of entries) zip.addBuffer(Buffer.isBuffer(data) ? data : Buffer.from(data), safeArchiveName(name), { compress: true });
+    zip.end();
+  });
+}
+
+export async function exportTheme(id, outFile) {
+  const theme = await getTheme(id);
+  const manifest = normalizeManifestAssets(theme.manifest);
+  const css = remapCssAssets(theme.css, theme.manifest.assets, manifest.assets);
+  const entries = [["theme.json", JSON.stringify(manifest, null, 2)], ["theme.css", css], ["LICENSE", manifest.license]];
+  for (const [key, asset] of Object.entries(manifest.assets)) entries.push([asset, await readFile(join(theme.dir, theme.manifest.assets[key]))]);
+  await atomicWrite(outFile, await zipBuffer(entries));
+  return outFile;
+}
+
+function validatePackageFiles(entries, manifest) {
+  const allowed = new Set(["theme.json", "theme.css", "license", "preview.png", ...Object.values(manifest.assets).map((asset) => asset.toLowerCase().replaceAll("\\", "/"))]);
+  for (const entry of entries.values()) if (!allowed.has(entry.name.toLowerCase())) throw new Error(`unregistered package file: ${entry.name}`);
+  for (const asset of Object.values(manifest.assets)) if (!entries.has(asset.toLowerCase().replaceAll("\\", "/"))) throw new Error(`theme package missing asset: ${asset}`);
+}
+
+export async function importTheme(file, { conflict = "reject" } = {}) {
+  const entries = await unzip(await readFile(file));
+  const themeEntry = entries.get("theme.json");
+  if (!themeEntry) throw new Error("theme package missing theme.json");
+  const packageManifest = validateThemeManifest(JSON.parse(themeEntry.data.toString("utf8")));
+  validatePackageFiles(entries, packageManifest);
+  let manifest = normalizeManifestAssets(packageManifest);
+  const packageCss = entries.get("theme.css")?.data.toString("utf8") || "";
+  validateCustomCss(packageCss, packageManifest);
+  const css = remapCssAssets(packageCss, packageManifest.assets, manifest.assets);
+  for (const asset of Object.values(packageManifest.assets)) validateImageBytes(entries.get(asset.toLowerCase().replaceAll("\\", "/")).data, extname(asset).toLowerCase());
+  const existing = (await listThemes()).find((theme) => theme.manifest.id === manifest.id);
+  if (existing?.builtIn && conflict !== "copy") throw new Error("theme package conflicts with a built-in theme; import it as a copy");
+  if (existing && conflict === "reject") throw new Error(`theme already exists: ${manifest.id}`);
+  if (existing && conflict === "copy") manifest = validateThemeManifest({ ...manifest, id: await uniqueId(manifest.id), name: `${manifest.name} Copy` });
+  if (existing && conflict !== "replace" && conflict !== "copy") throw new Error("conflict must be reject, copy, or replace");
+  const home = await ensureDirs();
+  const dir = userThemeDir(home, manifest.id);
+  await commitThemeDirectory(dir, async (stage) => {
+    await writeTheme(stage, manifest, css);
+    for (const [key, asset] of Object.entries(manifest.assets)) {
+      const sourceAsset = packageManifest.assets[key];
+      const entry = entries.get(sourceAsset.toLowerCase().replaceAll("\\", "/"));
+      const target = join(stage, asset);
+      await mkdir(dirname(target), { recursive: true });
+      await atomicWrite(target, entry.data);
+    }
+  });
+  return readThemeDir(dir, "user");
+}
+
+export { MAX_PACKAGE_BYTES as maxPackageBytes };
