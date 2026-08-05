@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>WorkBuddy Theme Forge</title>
+  <link rel="stylesheet" href="/assets/styles.css">
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div>
+        <div class="eyebrow">Local WorkBuddy 5.3 theme control</div>
+        <h1>WorkBuddy Theme Forge <small>v0.2.1</small></h1>
+      </div>
+      <div class="status" id="status"></div>
+    </header>
+
+    <div class="layout">
+      <section class="card library-card">
+        <h2>主题</h2>
+        <div class="actions">
+          <button id="apply">应用</button>
+          <button class="secondary" id="pause">暂停</button>
+          <button class="secondary" id="resume">继续</button>
+          <button class="secondary" id="native">原生</button>
+          <button class="secondary" id="rollback">回滚</button>
+        </div>
+        <div class="themes" id="themes"></div>
+        <div class="actions">
+          <button class="secondary" id="duplicate">复制</button>
+          <button class="danger" id="remove">删除</button>
+        </div>
+
+        <label for="import">导入 .wbtheme</label>
+        <input id="import" type="file" accept=".wbtheme,.zip">
+        <button class="secondary full" id="export">导出当前主题</button>
+
+        <label for="image">从图片创建主题</label>
+        <input id="image" type="file" accept="image/png,image/jpeg,image/webp">
+        <input id="imageName" placeholder="主题名称">
+        <button class="secondary full" id="createImage">创建图片主题</button>
+      </section>
+
+      <section class="card editor-card">
+        <div class="section-heading"><h2>编辑</h2><span id="dirtyBadge" class="dirty-badge"></span></div>
+        <div id="formError" class="form-error"></div>
+        <div class="grid2">
+          <div><label for="id">ID</label><input id="id" readonly></div>
+          <div><label for="name">名称</label><input id="name"></div>
+          <div><label for="appearance">外观</label><select id="appearance"><option value="auto">auto</option><option value="light">light</option><option value="dark">dark</option></select></div>
+          <div><label for="fontFamily">字体</label><input id="fontFamily"></div>
+        </div>
+        <div class="grid2" id="colors"></div>
+        <div class="grid2">
+          <div><label for="radius">圆角</label><input id="radius" type="number" min="0" max="48"></div>
+          <div><label for="blur">毛玻璃</label><input id="blur" type="number" min="0" max="80"></div>
+          <div><label for="fontSize">字号</label><input id="fontSize" type="number" min="10" max="32"></div>
+          <div><label for="lineHeight">行高</label><input id="lineHeight" type="number" min="1" max="2.5" step=".1"></div>
+          <div><label for="animationSpeed">动画速度</label><input id="animationSpeed" type="number" min=".1" max="4" step=".1"></div>
+          <div><label for="shadow">阴影</label><input id="shadow"></div>
+          <label class="check"><input id="animation" type="checkbox"> 启用动画</label>
+          <label class="check"><input id="reducedMotion" type="checkbox"> 减少动效</label>
+        </div>
+
+        <h3>背景</h3>
+        <div class="grid2">
+          <div><label for="fit">填充</label><select id="fit"><option value="cover">cover</option><option value="contain">contain</option></select></div>
+          <div><label for="zoom">缩放</label><input id="zoom" type="number" min="1" max="3" step=".1"></div>
+          <div><label for="positionX">水平位置</label><input id="positionX" type="range" min="0" max="100"></div>
+          <div><label for="positionY">垂直位置</label><input id="positionY" type="range" min="0" max="100"></div>
+          <div><label for="opacity">透明度</label><input id="opacity" type="number" min="0" max="1" step=".05"></div>
+          <div><label for="backgroundBlur">图片模糊</label><input id="backgroundBlur" type="number" min="0" max="40"></div>
+          <div><label for="overlayColor">遮罩色</label><input id="overlayColor" type="color"></div>
+          <div><label for="overlayOpacity">遮罩透明度</label><input id="overlayOpacity" type="number" min="0" max="1" step=".05"></div>
+          <div><label for="vignette">暗角</label><input id="vignette" type="number" min="0" max="1" step=".05"></div>
+        </div>
+
+        <details>
+          <summary>高级：选择器与安全 CSS</summary>
+          <p class="hint">自定义 CSS 会注入真实 WorkBuddy，但结构化预览无法保证完整呈现。</p>
+          <label for="selectors">选择器 JSON</label>
+          <textarea id="selectors"></textarea>
+          <label for="customCss">theme.css</label>
+          <textarea id="customCss"></textarea>
+        </details>
+        <div class="actions">
+          <button id="save">保存</button>
+          <button class="secondary" id="undo">撤销</button>
+          <button class="secondary" id="redo">重做</button>
+        </div>
+        <div id="toast" class="toast" aria-live="polite"></div>
+      </section>
+
+      <section class="card preview-card">
+        <h2>实时预览</h2>
+        <div id="preview" class="wb-preview">
+          <div class="wb-background"></div><div class="wb-overlay"></div>
+          <aside class="wb-sidebar">
+            <div class="wb-window-buttons"><i></i><i></i><i></i></div>
+            <div class="wb-brand">WorkBuddy <small>v5.3.5</small></div>
+            <button class="wb-new">＋ 新建任务</button>
+            <nav><span>◉ Moss</span><span>◇ 项目</span><span>☆ 专家 · 技能</span><span>◌ 自动化</span></nav>
+            <div class="wb-group-title">任务</div>
+            <div class="wb-task active">设计主题控制台</div><div class="wb-task">检查 WorkBuddy 适配</div><div class="wb-task">整理发布说明</div>
+            <div class="wb-profile">● 本地用户</div>
+          </aside>
+          <section class="wb-main">
+            <header class="wb-main-top"><span>工作空间 / 主题修复</span><span>⌕　⚙</span></header>
+            <div class="wb-content">
+              <span class="wb-kicker">WORKBUDDY THEME FORGE</span>
+              <h3>今天想构建什么？</h3>
+              <p>颜色、背景和界面细节会在这里即时预览。</p>
+              <div class="wb-shortcuts"><button>文档处理</button><button>代码开发</button><button>数据分析</button></div>
+              <pre><code>npm run start:control</code></pre>
+              <div class="wb-alert">连接状态或校验错误会使用主题错误色提示。</div>
+              <div class="wb-composer"><div>输入消息，或引用文件和技能</div><footer><span>＋　选择工作空间</span><button>发送</button></footer></div>
+            </div>
+          </section>
+          <aside class="wb-panel"><strong>详情面板</strong><p>主题信息</p><div class="wb-panel-box">圆角、阴影和毛玻璃</div><p>当前主题</p><div class="wb-panel-box" id="previewThemeName"></div></aside>
+        </div>
+        <p class="meta" id="contrast"></p>
+        <h3>诊断</h3><p class="meta" id="diagnostics"></p>
+        <h3>守护进程</h3><p class="meta" id="daemonHealth"></p>
+        <h3>日志</h3><div class="logs" id="logs"></div>
+      </section>
+    </div>
+  </main>
+  <script nonce="__NONCE__">globalThis.__WB_THEME_CONFIG__={token:__TOKEN__};</script>
+  <script type="module" nonce="__NONCE__" src="/assets/app.mjs"></script>
+</body>
+</html>
