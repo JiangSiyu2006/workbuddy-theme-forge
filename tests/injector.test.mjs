@@ -20,3 +20,15 @@ test("inject preflights WorkBuddy 5.3 and verifies an idempotent style", async (
   assert.match(injectionExpression, /wb-theme-forge-style/);
   assert.equal((injectionExpression.match(/createElement/g) || []).length, 1);
 });
+
+test("auto appearance restores the original renderer appearance before applying", async () => {
+  let expression = ""; let injection;
+  const session = { evaluate: async (value) => {
+    if (value.includes("const regions=")) return Object.fromEntries(["root", "sidebar", "main", "chat", "topbar", "input", "panel"].map((name) => [name, { hit: true }]));
+    if (value.includes("let el=document.getElementById")) { expression = value; const hash = JSON.parse(value.match(/el\.dataset\.hash=("[a-f0-9]+")/)[1]); injection = { themeId: "aurora-night", hash }; return injection; }
+    return { version: "5.3.5", injection, appearance: {}, variables: {}, identity: { applicationName: "WorkBuddy" } };
+  } };
+  await inject(session, { manifest: defaultTheme({ appearance: "auto" }), css: "" });
+  assert.match(expression, /html\.className=base\.htmlClass/);
+  assert.doesNotMatch(expression, /classList\.add\(\.\.\.\["dark"/);
+});
