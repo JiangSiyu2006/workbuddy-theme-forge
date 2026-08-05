@@ -10,7 +10,7 @@ preview.png    # 可选
 LICENSE
 ```
 
-`schemaVersion` 仍为 `1`。v0.2.0 新增可选字段：
+`schemaVersion` 仍为 `1`。v0.2.1 保持 v0.2.0 的可选字段和主题包结构，无需迁移：
 
 ```json
 {
@@ -36,3 +36,5 @@ LICENSE
 - 自定义 CSS 最多 256 KiB，禁止远程 URL、`@import`、`@font-face` 和未登记资源。
 - 导入器限制压缩包 32 MiB、解压后 64 MiB、64 个条目和单图 10 MiB。
 - 导入 ID 冲突默认拒绝；可选择 `copy` 或 `replace`。内置主题永远不能被覆盖。
+- 主编辑器展示已验证映射的主色、辅色、背景、表面、文字、边框和错误色；`warning`、`success` 继续保存在 schema 中以兼容旧主题。
+- 主题 selector 经过 CSS 语法校验，并作为 adapter 稳定 selector 的兼容扩展；高级 CSS 依赖真实 WorkBuddy DOM，结构化预览不保证完整呈现。
