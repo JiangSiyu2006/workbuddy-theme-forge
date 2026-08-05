@@ -1,65 +1,166 @@
 import { createServer } from "node:http";
 import { randomBytes } from "node:crypto";
-import { pathToFileURL } from "node:url";
-import { basename, join } from "node:path";
+import { readFile, rm } from "node:fs/promises";
+import { pathToFileURL, fileURLToPath } from "node:url";
+import { basename, extname, join } from "node:path";
 import { getForgeHome } from "../../src/constants.mjs";
 import { doctor } from "../../src/diagnostics.mjs";
-import { createThemeFromImage, deleteTheme, duplicateTheme, exportTheme, importTheme, listThemes, saveTheme } from "../../src/theme-store.mjs";
-import { checkContrast } from "../../src/theme-schema.mjs";
-import { readLogs, readState } from "../../src/state.mjs";
+import { createThemeFromImage, deleteTheme, duplicateTheme, exportTheme, getTheme, importTheme, listThemes, saveThemeFromSource } from "../../src/theme-store.mjs";
+import { readLogs, readState, writeState } from "../../src/state.mjs";
 import { applyTheme, inspectAll, restoreAll, resumeTheme, rollbackAll } from "../../src/runtime.mjs";
-import { runDaemon } from "../../src/daemon.mjs";
+import { getDaemonHealth, runDaemon } from "../../src/daemon.mjs";
+import { atomicWrite } from "../../src/files.mjs";
+import { loadImageAsset } from "../../src/theme-assets.mjs";
 
 const maxBodyBytes = 44 * 1024 * 1024;
-
-function page(token) {
-  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>WorkBuddy Theme Forge</title><style>
-:root{font-family:Inter,"Segoe UI",sans-serif;color:#e9ebf2;background:#121419}*{box-sizing:border-box}body{margin:0;background:#121419;color:#e9ebf2}.shell{max-width:1440px;margin:auto;padding:24px}.top{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:18px}.top h1{margin:4px 0;font-size:25px}.eyebrow{font-size:11px;color:#8e96aa;letter-spacing:.14em;text-transform:uppercase}.status{display:flex;gap:8px;flex-wrap:wrap}.pill{padding:7px 10px;border:1px solid #343945;border-radius:999px;color:#aeb5c7;background:#1d2027}.pill.ok{color:#72c6a0;border-color:#315d4b}.layout{display:grid;grid-template-columns:280px minmax(420px,1fr) minmax(360px,.9fr);gap:14px}.card{background:#1a1d23;border:1px solid #2e333d;border-radius:14px;padding:16px;min-width:0}.themes{display:grid;gap:7px;max-height:570px;overflow:auto}.theme{display:flex;justify-content:space-between;gap:8px;align-items:center;border:1px solid #303640;background:#20242c;color:#e9ebf2;border-radius:9px;padding:10px;text-align:left;cursor:pointer}.theme.active{border-color:#7783d8;background:#252a39}.theme small{color:#8f97aa}label{display:block;font-size:12px;color:#9da5b8;margin:11px 0 5px}input,select,textarea,button{font:inherit}input:not([type=checkbox]),select,textarea{width:100%;background:#12151a;color:#e9ebf2;border:1px solid #343a46;border-radius:8px;padding:8px}input[type=color]{height:38px;padding:3px}.grid2{display:grid;grid-template-columns:1fr 1fr;gap:9px}.actions{display:flex;gap:7px;flex-wrap:wrap;margin:12px 0}button{border:1px solid transparent;background:#6672ca;color:white;border-radius:8px;padding:8px 11px;cursor:pointer}button.secondary{background:#262b34;border-color:#3a414e;color:#d7dbe5}button.danger{background:#65343b}.preview{height:390px;border-radius:12px;padding:13px;display:grid;grid-template-columns:120px 1fr;gap:10px;overflow:hidden}.preview-side,.preview-main,.preview-input{border:1px solid #ffffff20;border-radius:10px;background:#ffffff0b}.preview-side{padding:12px}.preview-main{display:flex;flex-direction:column;padding:12px;gap:10px}.bubble{width:72%;padding:11px;border-radius:9px;background:#ffffff0e}.bubble.me{align-self:flex-end}.preview-input{margin-top:auto;padding:11px}.meta{font-size:12px;color:#99a1b3;line-height:1.6}.logs{height:160px;overflow:auto;background:#101216;border-radius:8px;padding:9px;font:11px Consolas,monospace;color:#9ba5b8;white-space:pre-wrap}.toast{min-height:22px;color:#70c69c;font-size:13px}.error{color:#e9858e}details{margin-top:12px}summary{cursor:pointer;color:#aeb5c7}textarea{min-height:110px;font-family:Consolas,monospace}@media(max-width:1100px){.layout{grid-template-columns:250px 1fr}.preview-card{grid-column:1/-1}}@media(max-width:720px){.layout{display:block}.card{margin-bottom:12px}.grid2{grid-template-columns:1fr}}</style></head><body><main class="shell"><header class="top"><div><div class="eyebrow">Local WorkBuddy 5.3 theme control</div><h1>WorkBuddy Theme Forge <small>v0.2.0</small></h1></div><div class="status" id="status"></div></header><div class="layout"><section class="card"><h2>主题</h2><div class="actions"><button id="apply">应用</button><button class="secondary" id="pause">暂停</button><button class="secondary" id="resume">继续</button><button class="secondary" id="native">原生</button><button class="secondary" id="rollback">回滚</button></div><div class="themes" id="themes"></div><div class="actions"><button class="secondary" id="duplicate">复制</button><button class="danger" id="remove">删除</button></div><label>导入 .wbtheme</label><input id="import" type="file" accept=".wbtheme,.zip"><button class="secondary" id="export">导出当前主题</button><label>从图片创建主题</label><input id="image" type="file" accept="image/png,image/jpeg,image/webp"><input id="imageName" placeholder="主题名称"><button class="secondary" id="createImage">创建图片主题</button></section><section class="card"><h2>编辑</h2><div class="grid2"><div><label>ID</label><input id="id"></div><div><label>名称</label><input id="name"></div><div><label>外观</label><select id="appearance"><option>auto</option><option>light</option><option>dark</option></select></div><div><label>字体</label><input id="fontFamily"></div></div><div class="grid2" id="colors"></div><div class="grid2"><div><label>圆角</label><input id="radius" type="number" min="0" max="48"></div><div><label>模糊</label><input id="blur" type="number" min="0" max="80"></div><div><label>字号</label><input id="fontSize" type="number" min="10" max="32"></div><div><label>行高</label><input id="lineHeight" type="number" min="1" max="2.5" step=".1"></div><div><label>动画速度</label><input id="animationSpeed" type="number" min=".1" max="4" step=".1"></div><div><label>减少动效</label><input id="reducedMotion" type="checkbox"></div></div><h3>背景</h3><div class="grid2"><div><label>填充</label><select id="fit"><option>cover</option><option>contain</option></select></div><div><label>缩放</label><input id="zoom" type="number" min="1" max="3" step=".1"></div><div><label>水平位置</label><input id="positionX" type="range" min="0" max="100"></div><div><label>垂直位置</label><input id="positionY" type="range" min="0" max="100"></div><div><label>透明度</label><input id="opacity" type="number" min="0" max="1" step=".05"></div><div><label>图片模糊</label><input id="backgroundBlur" type="number" min="0" max="40"></div><div><label>遮罩色</label><input id="overlayColor" type="color"></div><div><label>遮罩透明度</label><input id="overlayOpacity" type="number" min="0" max="1" step=".05"></div><div><label>暗角</label><input id="vignette" type="number" min="0" max="1" step=".05"></div></div><details><summary>高级：选择器与安全 CSS</summary><label>选择器 JSON</label><textarea id="selectors"></textarea><label>theme.css</label><textarea id="customCss"></textarea></details><div class="actions"><button id="save">保存</button><button class="secondary" id="undo">撤销</button><button class="secondary" id="redo">重做</button></div><div id="toast" class="toast"></div></section><section class="card preview-card"><h2>实时预览</h2><div id="preview" class="preview"><aside class="preview-side">WorkBuddy<br><br>首页<br>任务<br>文件</aside><div class="preview-main"><div class="bubble">欢迎回来，今天想构建什么？</div><div class="bubble me">让工作界面更克制、更清晰。</div><div class="preview-input">输入消息...</div></div></div><p class="meta" id="contrast"></p><h3>诊断</h3><p class="meta" id="diagnostics"></p><h3>日志</h3><div class="logs" id="logs"></div></section></div></main><script>
-const token=${JSON.stringify(token)},colorKeys=['primary','secondary','background','surface','text','border','error','warning','success'];let themes=[],selected=null,history=[],future=[],dirty=false,lastSnapshot='';const $=id=>document.getElementById(id),esc=value=>String(value??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));$('colors').innerHTML=colorKeys.map(k=>'<div><label>'+k+'</label><input id="c_'+k+'" type="color"></div>').join('');async function api(path,opt={}){opt.headers={...(opt.headers||{}),'x-wb-theme-token':token};if(opt.body&&typeof opt.body!=='string'){opt.headers['content-type']='application/json';opt.body=JSON.stringify(opt.body)}const r=await fetch(path,opt);if(!r.ok){const e=await r.json().catch(()=>({error:r.statusText}));throw new Error(e.error)}return r.headers.get('content-type')?.includes('json')?r.json():r.blob()}function note(msg,error=false){$('toast').textContent=msg;$('toast').className=error?'toast error':'toast'}function num(id){return Number($(id).value)}function read(){const base=selected?.manifest||{};return {...base,schemaVersion:1,id:$('id').value,name:$('name').value,appearance:$('appearance').value,colors:Object.fromEntries(colorKeys.map(k=>[k,$('c_'+k).value])),variables:{...(base.variables||{}),radius:num('radius'),blur:num('blur'),fontFamily:$('fontFamily').value,fontSize:num('fontSize'),lineHeight:num('lineHeight'),animation:true,animationSpeed:num('animationSpeed')},selectors:JSON.parse($('selectors').value),background:{fit:$('fit').value,zoom:num('zoom'),positionX:num('positionX'),positionY:num('positionY'),opacity:num('opacity'),blur:num('backgroundBlur'),overlayColor:$('overlayColor').value,overlayOpacity:num('overlayOpacity'),vignette:num('vignette')},reducedMotion:{enabled:$('reducedMotion').checked}}}function snapshotForm(){return JSON.stringify({manifest:read(),css:$('customCss').value})}function recordChange(){if(!selected)return;const now=snapshotForm();if(lastSnapshot&&lastSnapshot!==now){history.push(lastSnapshot);if(history.length>50)history.shift();future=[]}lastSnapshot=now;render()}function fill(theme,record=true){selected=theme;const m=theme.manifest;if(record){history=[];future=[]}$('id').value=m.id;$('name').value=m.name;$('appearance').value=m.appearance;colorKeys.forEach(k=>$('c_'+k).value=m.colors[k]);for(const k of ['radius','blur','fontFamily','fontSize','lineHeight','animationSpeed'])$(k).value=m.variables[k];$('reducedMotion').checked=m.reducedMotion.enabled;for(const k of ['fit','zoom','positionX','positionY','opacity','vignette'])$(k).value=m.background[k];$('backgroundBlur').value=m.background.blur;$('overlayColor').value=m.background.overlayColor;$('overlayOpacity').value=m.background.overlayOpacity;$('selectors').value=JSON.stringify(m.selectors,null,2);$('customCss').value=theme.css||'';dirty=false;render();lastSnapshot=snapshotForm();dirty=false}function render(){try{const m=read(),c=m.colors,p=$('preview');p.style.background=c.background;p.style.color=c.text;p.style.fontFamily=m.variables.fontFamily;p.style.fontSize=m.variables.fontSize+'px';p.style.borderRadius=m.variables.radius+'px';document.querySelectorAll('.preview-side,.preview-main,.preview-input,.bubble').forEach(x=>{x.style.background=c.surface;x.style.borderColor=c.border;x.style.borderRadius=m.variables.radius+'px'});const ratio=contrast(c.text,c.background);$('contrast').textContent='文字/背景对比度 '+ratio.toFixed(2)+' · '+(ratio>=4.5?'WCAG AA 通过':'WCAG AA 风险');dirty=true}catch{}}function contrast(a,b){const l=x=>{const v=[1,3,5].map(i=>parseInt(x.slice(i,i+2),16)/255).map(n=>n<=.03928?n/12.92:((n+.055)/1.055)**2.4);return .2126*v[0]+.7152*v[1]+.0722*v[2]};return(Math.max(l(a),l(b))+.05)/(Math.min(l(a),l(b))+.05)}function renderThemes(){ $('themes').innerHTML=themes.map((t,i)=>'<button class="theme '+(selected?.manifest.id===t.manifest.id?'active':'')+'" data-i="'+i+'"><span>'+esc(t.manifest.name)+'</span><small>'+(t.builtIn?'内置':'本地')+'</small></button>').join('');document.querySelectorAll('.theme').forEach(b=>b.onclick=()=>{if(dirty&&!confirm('放弃未保存的更改？'))return;fill(themes[Number(b.dataset.i)]);renderThemes()})}async function refresh(){const data=await api('/api/dashboard');themes=data.themes;const keep=selected&&themes.find(t=>t.manifest.id===selected.manifest.id);if(!dirty){if(keep)fill(keep,false);else if(themes[0])fill(themes[0])}renderThemes();const d=data.doctor.cdp;const renderer=d.renderers?.[0];$('status').innerHTML='<span class="pill '+(d.ok?'ok':'')+'">CDP '+(d.ok?'已连接':'不可用')+'</span><span class="pill">'+esc(renderer?.renderer.version||'unknown')+'</span><span class="pill">'+esc(data.state.status)+'</span>';$('diagnostics').textContent=renderer?('适配器 '+(renderer.adapter||'unknown')+' · 命中率 '+Math.round((renderer.compatibility?.hitRate||0)*100)+'% · 缺失 '+(renderer.compatibility?.missing.join(', ')||'无')):d.message;$('logs').textContent=data.logs.map(x=>x.time+' '+x.level+' '+x.event+(x.error?' · '+x.error:'')).join('\n')}async function action(name,body={}){try{note('处理中...');await api('/api/actions/'+name,{method:'POST',body});note('操作完成');await refresh()}catch(e){note(e.message,true)}}document.querySelectorAll('input,select,textarea').forEach(x=>x.addEventListener('input',recordChange));$('apply').onclick=()=>action('apply',{themeId:selected.manifest.id});$('pause').onclick=()=>action('pause');$('resume').onclick=()=>action('resume');$('native').onclick=()=>action('restore');$('rollback').onclick=()=>action('rollback');$('save').onclick=async()=>{try{const m=read();await api('/api/themes',{method:'POST',body:{manifest:m,css:$('customCss').value}});dirty=false;note('已保存');await refresh()}catch(e){note(e.message,true)}};$('duplicate').onclick=async()=>{const name=prompt('副本名称',selected.manifest.name+' Copy');if(name)try{await api('/api/themes/'+selected.manifest.id+'/duplicate',{method:'POST',body:{name}});await refresh()}catch(e){note(e.message,true)}};$('remove').onclick=async()=>{if(!confirm('删除这个本地主题？'))return;try{await api('/api/themes/'+selected.manifest.id,{method:'DELETE'});selected=null;dirty=false;await refresh()}catch(e){note(e.message,true)}};$('export').onclick=async()=>{const b=await api('/api/themes/'+selected.manifest.id+'/export');const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=selected.manifest.id+'.wbtheme';a.click();URL.revokeObjectURL(a.href)};$('import').onchange=async()=>{const f=$('import').files[0];if(!f)return;try{await api('/api/import',{method:'POST',body:{name:f.name,data:await file64(f),conflict:'copy'}});dirty=false;await refresh()}catch(e){note(e.message,true)}};$('createImage').onclick=async()=>{const f=$('image').files[0];if(!f)return note('请选择图片',true);try{await api('/api/create-image',{method:'POST',body:{name:$('imageName').value||f.name.replace(/\.[^.]+$/,''),filename:f.name,data:await file64(f)}});dirty=false;await refresh()}catch(e){note(e.message,true)}};function file64(f){return new Promise((resolve,reject)=>{const r=new FileReader;r.onload=()=>resolve(r.result.split(',')[1]);r.onerror=reject;r.readAsDataURL(f)})}$('undo').onclick=()=>{if(!history.length)return;future.push(snapshotForm());const x=JSON.parse(history.pop());fill({...selected,manifest:x.manifest,css:x.css},false);lastSnapshot=snapshotForm();dirty=true};$('redo').onclick=()=>{if(!future.length)return;history.push(snapshotForm());const x=JSON.parse(future.pop());fill({...selected,manifest:x.manifest,css:x.css},false);lastSnapshot=snapshotForm();dirty=true};window.addEventListener('beforeunload',e=>{if(dirty){e.preventDefault();e.returnValue=''}});refresh();setInterval(refresh,5000);
-</script></body></html>`;
-}
+const publicRoot = fileURLToPath(new URL("./public", import.meta.url));
+const sharedContract = fileURLToPath(new URL("../../src/theme-contract.mjs", import.meta.url));
+const staticFiles = new Map([
+  ["/assets/styles.css", { file: join(publicRoot, "styles.css"), type: "text/css; charset=utf-8" }],
+  ["/assets/app.mjs", { file: join(publicRoot, "app.mjs"), type: "text/javascript; charset=utf-8" }],
+  ["/assets/theme-contract.mjs", { file: sharedContract, type: "text/javascript; charset=utf-8" }]
+]);
 
 async function bodyJson(req) {
   const chunks = []; let size = 0;
-  for await (const chunk of req) { size += chunk.length; if (size > maxBodyBytes) throw new Error("request body too large"); chunks.push(chunk); }
+  for await (const chunk of req) {
+    size += chunk.length;
+    if (size > maxBodyBytes) throw new Error("request body too large");
+    chunks.push(chunk);
+  }
   return JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}");
 }
 
-function json(res, status, value) { res.writeHead(status, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" }); res.end(JSON.stringify(value)); }
+function json(res, status, value) {
+  res.writeHead(status, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", "referrer-policy": "no-referrer" });
+  res.end(JSON.stringify(value));
+}
 
-export async function startControlServer({ requestedPort = Number(process.env.WB_THEME_EDITOR_PORT || 4782), cdpPort = Number(process.env.WORKBUDDY_REMOTE_DEBUGGING_PORT || 9223), open = false } = {}) {
+function themeDto(theme) {
+  return { manifest: theme.manifest, css: theme.css, source: theme.source, builtIn: theme.builtIn, hasBackground: Boolean(theme.manifest.assets?.background) };
+}
+
+async function page(token, nonce) {
+  return (await readFile(join(publicRoot, "index.html"), "utf8"))
+    .replaceAll("__TOKEN__", JSON.stringify(token))
+    .replaceAll("__NONCE__", nonce);
+}
+
+function csp(nonce) {
+  return `default-src 'none'; script-src 'self' 'nonce-${nonce}'; style-src 'self'; img-src 'self' blob: data:; connect-src 'self'; font-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`;
+}
+
+async function sendStatic(pathname, res) {
+  const asset = staticFiles.get(pathname);
+  if (!asset) return false;
+  res.writeHead(200, { "content-type": asset.type, "cache-control": "no-store", "referrer-policy": "no-referrer", "x-content-type-options": "nosniff" });
+  res.end(await readFile(asset.file));
+  return true;
+}
+
+export async function startControlServer({ requestedPort = Number(process.env.WB_THEME_EDITOR_PORT || 4782), cdpPort = Number(process.env.WORKBUDDY_REMOTE_DEBUGGING_PORT || 9223), cdpPortSource = "explicit", ownerVerified = false, open = false } = {}) {
   const token = randomBytes(24).toString("hex");
   const abort = new AbortController();
   let actualPort;
   const server = createServer(async (req, res) => {
     try {
-      const host = req.headers.host;
       const expectedHost = `127.0.0.1:${actualPort}`;
-      if (host !== expectedHost) return json(res, 403, { error: "invalid Host header" });
+      if (req.headers.host !== expectedHost) return json(res, 403, { error: "invalid Host header" });
       const url = new URL(req.url, `http://${expectedHost}`);
-      if (!url.pathname.startsWith("/api/")) { res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" }); return res.end(page(token)); }
+      if (await sendStatic(url.pathname, res)) return;
+      if (!url.pathname.startsWith("/api/")) {
+        const nonce = randomBytes(18).toString("base64");
+        res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "content-security-policy": csp(nonce), "referrer-policy": "no-referrer", "x-content-type-options": "nosniff" });
+        return res.end(await page(token, nonce));
+      }
       if (req.headers["x-wb-theme-token"] !== token) return json(res, 403, { error: "invalid session token" });
       const origin = req.headers.origin;
       if (origin && origin !== `http://${expectedHost}`) return json(res, 403, { error: "invalid Origin header" });
-      if (url.pathname === "/api/dashboard" && req.method === "GET") return json(res, 200, { state: await readState(), themes: await listThemes(), doctor: await doctor({ port: cdpPort }), logs: await readLogs(80) });
-      if (url.pathname === "/api/themes" && req.method === "POST") { const input = await bodyJson(req); return json(res, 200, { ok: true, theme: await saveTheme(input.manifest, input.css || "") }); }
-      const match = url.pathname.match(/^\/api\/themes\/([a-z0-9-]+)(?:\/(duplicate|export))?$/);
+
+      if (url.pathname === "/api/dashboard" && req.method === "GET") return json(res, 200, {
+        state: await readState(), themes: (await listThemes()).map(themeDto), doctor: await doctor({ port: cdpPort, portSource: cdpPortSource, ownerVerified }), daemon: getDaemonHealth(), logs: await readLogs(80)
+      });
+      if (url.pathname === "/api/themes" && req.method === "POST") {
+        const input = await bodyJson(req);
+        const saved = await saveThemeFromSource(input.sourceThemeId, input.manifest, input.css || "");
+        return json(res, 200, { ok: true, theme: themeDto(saved.theme), copiedFromBuiltIn: saved.copiedFromBuiltIn });
+      }
+
+      const match = url.pathname.match(/^\/api\/themes\/([a-z0-9-]+)(?:\/(duplicate|export|background))?$/);
       if (match && req.method === "DELETE" && !match[2]) { await deleteTheme(match[1]); return json(res, 200, { ok: true }); }
-      if (match?.[2] === "duplicate" && req.method === "POST") { const input = await bodyJson(req); return json(res, 200, { ok: true, theme: await duplicateTheme(match[1], input.name) }); }
-      if (match?.[2] === "export" && req.method === "GET") { const out = join(getForgeHome(), "exports", `${match[1]}.wbtheme`); await exportTheme(match[1], out); const bytes = await import("node:fs/promises").then((fs) => fs.readFile(out)); res.writeHead(200, { "content-type": "application/octet-stream", "content-disposition": `attachment; filename=${match[1]}.wbtheme`, "cache-control": "no-store" }); return res.end(bytes); }
-      if (url.pathname === "/api/import" && req.method === "POST") { const input = await bodyJson(req); const file = join(getForgeHome(), "imports", basename(input.name || "theme.wbtheme")); await import("../../src/files.mjs").then(({ atomicWrite }) => atomicWrite(file, Buffer.from(input.data, "base64"))); return json(res, 200, { ok: true, theme: await importTheme(file, { conflict: input.conflict || "reject" }) }); }
-      if (url.pathname === "/api/create-image" && req.method === "POST") { const input = await bodyJson(req); return json(res, 200, { ok: true, theme: await createThemeFromImage({ bytes: Buffer.from(input.data, "base64"), filename: basename(input.filename), name: input.name }) }); }
+      if (match?.[2] === "duplicate" && req.method === "POST") { const input = await bodyJson(req); return json(res, 200, { ok: true, theme: themeDto(await duplicateTheme(match[1], input.name)) }); }
+      if (match?.[2] === "background" && req.method === "GET") {
+        const theme = await getTheme(match[1]);
+        const asset = theme.manifest.assets?.background;
+        if (!asset) return json(res, 404, { error: "theme has no background" });
+        const image = await loadImageAsset(theme.dir, asset);
+        const type = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp" }[extname(image.file).toLowerCase()];
+        res.writeHead(200, { "content-type": type, "cache-control": "no-store", "content-security-policy": "default-src 'none'", "x-content-type-options": "nosniff" });
+        return res.end(image.bytes);
+      }
+      if (match?.[2] === "export" && req.method === "GET") {
+        const out = join(getForgeHome(), "exports", `${match[1]}-${randomBytes(6).toString("hex")}.wbtheme`);
+        try {
+          await exportTheme(match[1], out);
+          const bytes = await readFile(out);
+          res.writeHead(200, { "content-type": "application/octet-stream", "content-disposition": `attachment; filename=${match[1]}.wbtheme`, "cache-control": "no-store" });
+          return res.end(bytes);
+        } finally { await rm(out, { force: true }).catch(() => {}); }
+      }
+      if (url.pathname === "/api/import" && req.method === "POST") {
+        const input = await bodyJson(req);
+        const file = join(getForgeHome(), "imports", `${randomBytes(6).toString("hex")}-${basename(input.name || "theme.wbtheme")}`);
+        try {
+          await atomicWrite(file, Buffer.from(input.data, "base64"));
+          return json(res, 200, { ok: true, theme: themeDto(await importTheme(file, { conflict: input.conflict || "reject" })) });
+        } finally { await rm(file, { force: true }).catch(() => {}); }
+      }
+      if (url.pathname === "/api/create-image" && req.method === "POST") {
+        const input = await bodyJson(req);
+        return json(res, 200, { ok: true, theme: themeDto(await createThemeFromImage({ bytes: Buffer.from(input.data, "base64"), filename: basename(input.filename), name: input.name })) });
+      }
+
       const action = url.pathname.match(/^\/api\/actions\/(apply|pause|resume|restore|rollback|inspect)$/)?.[1];
-      if (action && req.method === "POST") { const input = await bodyJson(req); const options = { port: cdpPort, force: Boolean(input.force) }; const result = action === "apply" ? await applyTheme(input.themeId, options) : action === "pause" ? await restoreAll({ ...options, status: "paused", keepTheme: true }) : action === "resume" ? await resumeTheme(options) : action === "restore" ? await restoreAll({ ...options, status: "native", keepTheme: false }) : action === "rollback" ? await rollbackAll(options) : await inspectAll(options); return json(res, 200, { ok: true, result }); }
+      if (action && req.method === "POST") {
+        const input = await bodyJson(req);
+        const options = { port: cdpPort, force: Boolean(input.force), ownerVerified };
+        let result; let themeId; let copiedFromBuiltIn = false;
+        if (action === "apply") {
+          themeId = input.themeId;
+          if (input.draft) {
+            const saved = await saveThemeFromSource(input.draft.sourceThemeId, input.draft.manifest, input.draft.css || "");
+            themeId = saved.theme.manifest.id;
+            copiedFromBuiltIn = saved.copiedFromBuiltIn;
+          }
+          if (!input.draft && !themeId) throw new Error("themeId is required");
+          result = await applyTheme(themeId, options);
+        } else if (action === "pause") result = await restoreAll({ ...options, status: "paused", keepTheme: true });
+        else if (action === "resume") result = await resumeTheme(options);
+        else if (action === "restore") result = await restoreAll({ ...options, status: "native", keepTheme: false });
+        else if (action === "rollback") result = await rollbackAll(options);
+        else result = await inspectAll(options);
+        return json(res, 200, { ok: true, result, themeId, copiedFromBuiltIn });
+      }
       return json(res, 404, { error: "not found" });
-    } catch (error) { json(res, 400, { error: error.message }); }
+    } catch (error) { json(res, 400, { error: error.message, details: error.details }); }
   });
+
   for (let candidate = requestedPort; candidate < requestedPort + 10; candidate++) {
-    try { await new Promise((resolve, reject) => { const onError = (error) => { server.off("listening", onListen); reject(error); }; const onListen = () => { server.off("error", onError); resolve(); }; server.once("error", onError); server.once("listening", onListen); server.listen(candidate, "127.0.0.1"); }); actualPort = candidate; break; }
-    catch (error) { if (error.code !== "EADDRINUSE") throw error; }
+    try {
+      await new Promise((resolve, reject) => {
+        const onError = (error) => { server.off("listening", onListen); reject(error); };
+        const onListen = () => { server.off("error", onError); resolve(); };
+        server.once("error", onError); server.once("listening", onListen); server.listen(candidate, "127.0.0.1");
+      });
+      actualPort = candidate; break;
+    } catch (error) { if (error.code !== "EADDRINUSE") throw error; }
   }
   if (!actualPort) throw new Error("no available control server port");
-  runDaemon({ port: cdpPort, signal: abort.signal }).catch(() => {});
+  if (ownerVerified) {
+    const currentState = await readState();
+    await writeState({ ...currentState, port: cdpPort, portSource: cdpPortSource, ownerVerified, updatedAt: new Date().toISOString() });
+  }
+  runDaemon({ port: cdpPort, ownerVerified, signal: abort.signal }).catch((error) => { console.error(`Theme daemon stopped: ${error.message}`); });
   const url = `http://127.0.0.1:${actualPort}/`;
   console.log(`Theme control: ${url}`);
   if (open && process.platform === "win32") {
