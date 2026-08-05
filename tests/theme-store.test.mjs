@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { createThemeFromImage, deleteTheme, duplicateTheme, exportTheme, getTheme, importTheme, listThemes, saveTheme } from "../src/theme-store.mjs";
+import { createThemeFromImage, deleteTheme, duplicateTheme, exportTheme, getTheme, importTheme, listThemes, saveTheme, saveThemeFromSource } from "../src/theme-store.mjs";
 import { defaultTheme } from "../src/theme-schema.mjs";
 
 const root = join(process.cwd(), ".test-tmp", "store");
@@ -44,5 +44,28 @@ test("migrates legacy root assets to assets directory", async () => {
   const imported = await importTheme(archive);
   assert.equal(imported.manifest.assets.background, "assets/background.png");
   assert.match(imported.css, /assets\/background\.png/);
+  await rm(root, { recursive: true, force: true });
+});
+
+test("saving an edited built-in creates and selects a local copy", async () => {
+  process.env.WB_THEME_FORGE_HOME = home;
+  await rm(root, { recursive: true, force: true });
+  const source = await getTheme("aurora-night");
+  const saved = await saveThemeFromSource(source.manifest.id, { ...source.manifest, name: "Edited Night", colors: { ...source.manifest.colors, primary: "#123456" } }, source.css);
+  assert.equal(saved.copiedFromBuiltIn, true);
+  assert.notEqual(saved.theme.manifest.id, source.manifest.id);
+  assert.equal(saved.theme.builtIn, false);
+  assert.equal(saved.theme.manifest.colors.primary, "#123456");
+  await rm(root, { recursive: true, force: true });
+});
+
+test("saving an unchanged built-in keeps the built-in theme", async () => {
+  process.env.WB_THEME_FORGE_HOME = home;
+  await rm(root, { recursive: true, force: true });
+  const source = await getTheme("aurora-night");
+  const saved = await saveThemeFromSource(source.manifest.id, source.manifest, source.css);
+  assert.equal(saved.copiedFromBuiltIn, false);
+  assert.equal(saved.theme.manifest.id, source.manifest.id);
+  assert.equal(saved.theme.builtIn, true);
   await rm(root, { recursive: true, force: true });
 });
