@@ -2,24 +2,22 @@
 
 WorkBuddy Theme Forge 是面向 Windows 的第三方主题引擎。它通过 WorkBuddy 的本机 Chromium DevTools Protocol（CDP）注入可逆 CSS，不修改 `WorkBuddy.exe`、`app.asar`、官方资源或代码签名。
 
-当前版本：`v0.2.0`。正式适配并手动验证 WorkBuddy `5.3.5`。
+当前版本：`v0.2.1`。正式支持基线为 Windows WorkBuddy `5.3.5`。
 版本变化记录见 [CHANGELOG.md](CHANGELOG.md)，版本号和迭代流程见 [docs/versioning.md](docs/versioning.md)。
 
 > 本项目与腾讯、WorkBuddy 没有隶属、授权或合作关系。
 
-## v0.2.0 亮点
+## v0.2.1 修复重点
 
-- 新增 WorkBuddy 5.3.x adapter、逻辑区域命中诊断和深浅外观同步。
-- 新增本地 Web 控制台，可应用、暂停、继续、恢复、回滚、编辑、复制、导入和导出主题。
-- 守护进程按 CSS 哈希检查所有 renderer，页面刷新或样式丢失时自动补针。
-- 图片主题支持位置、缩放、透明度、模糊、遮罩和暗角。
-- `.wbtheme` 支持标准 ZIP store/deflate，并校验路径、资源、CRC、数量和解压大小。
-- 自定义 CSS 经过解析、资源白名单和主题作用域限制，不允许远程 URL 或 `@import`。
-- 内置克制原生风格的 `Aurora Night` 与 `Aurora Dawn`。
+- 修复控制台脚本无法执行，以及保存、加载、应用、导入和导出整体失效。
+- 以 WorkBuddy 5.3.5 的侧栏、主内容、输入区、代码区和详情面板重建预览，并与实际注入共用主题 token。
+- 修复圆角、背景、模糊、阴影、字体、字号、行高、外观恢复和动画映射。
+- 增加确认式 WorkBuddy 管理启动/重启、renderer 身份校验和本地 CDP 端口管理。
+- 增加 adapter 必需区域校验、多 renderer 事务回滚、运行时互斥和 daemon 健康诊断。
 
 ## 快速开始
 
-需要 Node.js 20+。WorkBuddy 已使用 CDP 启动时：
+需要 Node.js 20+。推荐直接运行管理式入口：
 
 ```powershell
 npm install
@@ -27,13 +25,13 @@ npm test
 npm run start:control
 ```
 
-也可以使用 Windows 启动器。若 WorkBuddy 尚未开启 CDP，它会先要求输入 `YES` 确认，再执行重启：
+`npm run start:control` 不会查找或复用已存在的 CDP。WorkBuddy 未运行时，输入精确的 `YES` 后会启动 WorkBuddy 和控制台；WorkBuddy 已运行时，输入精确的 `YES` 后会先关闭现有实例，再以本地 CDP 参数重新启动 WorkBuddy 和控制台。也可直接调用：
 
 ```powershell
 .\scripts\start-control.ps1 -OpenBrowser
 ```
 
-默认控制台为 `http://127.0.0.1:4782`，CDP 为 `127.0.0.1:9223`。两者均不监听公网地址。
+默认控制台为 `http://127.0.0.1:4782`。新启动的 WorkBuddy 优先使用 `127.0.0.1:9223`；若 `9223` 被占用则选择空闲高位端口。两者均不监听公网地址。
 
 ## CLI
 
@@ -52,9 +50,10 @@ node src/cli.mjs export aurora-night --out aurora-night.wbtheme
 node src/cli.mjs inspect --json
 node src/cli.mjs logs --tail 50 --json
 node src/cli.mjs serve --open
+node src/cli.mjs serve --port 9444 --open
 ```
 
-未知 WorkBuddy 版本或核心 selector 全部失效时，`apply` 默认拒绝继续。确认风险后可以使用 `--force`。
+未知 WorkBuddy 版本仅在 WorkBuddy 身份、根节点/侧栏/主内容和关键变量签名全部匹配时使用 5.3 adapter；否则 `apply` 默认拒绝继续。确认风险后可以使用 `--force`。
 
 ## 状态语义
 
