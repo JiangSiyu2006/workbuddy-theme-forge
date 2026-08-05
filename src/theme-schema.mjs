@@ -1,4 +1,6 @@
 import { COLOR, IMAGE_EXTENSIONS, THEME_ID, THEME_SCHEMA_VERSION } from "./constants.mjs";
+import * as csstree from "css-tree";
+import { themeTokens, tokensToCss } from "./theme-contract.mjs";
 
 const defaults = {
   appearance: "auto",
@@ -40,6 +42,16 @@ function safeCssValue(value, key, maxLength = 160) {
   return value.trim();
 }
 
+function safeSelectorList(value, key) {
+  if (typeof value !== "string" || !value.trim() || value.length > 500 || /[{};]/.test(value)) throw new Error(`${key} must be a safe selector string`);
+  try {
+    const ast = csstree.parse(value, { context: "selectorList" });
+    return csstree.generate(ast);
+  } catch (error) {
+    throw new Error(`${key} is not valid CSS: ${error.message}`);
+  }
+}
+
 export function validateThemeManifest(input) {
   if (!record(input)) throw new Error("theme manifest must be an object");
   if (input.schemaVersion !== THEME_SCHEMA_VERSION) throw new Error(`unsupported schemaVersion: ${input.schemaVersion}`);
@@ -63,9 +75,7 @@ export function validateThemeManifest(input) {
   if (typeof variables.animation !== "boolean") throw new Error("variables.animation must be boolean");
 
   const selectors = { ...defaults.selectors, ...(record(input.selectors) ? input.selectors : {}) };
-  for (const [key, value] of Object.entries(selectors)) {
-    if (typeof value !== "string" || !value.trim() || value.length > 500 || /[{};]/.test(value)) throw new Error(`selectors.${key} must be a safe selector string`);
-  }
+  for (const [key, value] of Object.entries(selectors)) selectors[key] = safeSelectorList(value, `selectors.${key}`);
 
   const assets = record(input.assets) ? { ...input.assets } : {};
   for (const [key, value] of Object.entries(assets)) {
@@ -113,10 +123,58 @@ export function checkContrast(theme) {
   return { ratio: Number(ratio.toFixed(2)), level: ratio >= 7 ? "AAA" : ratio >= 4.5 ? "AA" : "fail", passesAA: ratio >= 4.5 };
 }
 
-export function themeToCss(theme, assetUrl = "") {
-  const t = validateThemeManifest(theme); const c = t.colors; const v = t.variables; const b = t.background;
-  const motion = t.reducedMotion.enabled || !v.animation ? "0ms" : `${Math.round(220 / v.animationSpeed)}ms`;
-  const imageLayer = assetUrl ? `html[data-wb-theme-forge] body{position:relative;isolation:isolate;background:transparent!important;}body::before{content:"";position:fixed;inset:${-b.blur * 2}px;z-index:-2;pointer-events:none;background-image:url(${JSON.stringify(assetUrl)});background-size:${b.fit};background-position:${b.positionX}% ${b.positionY}%;background-repeat:no-repeat;opacity:${b.opacity};filter:blur(${b.blur}px);transform:scale(${b.zoom});}` : "";
-  const overlayLayer = assetUrl && (b.overlayOpacity || b.vignette) ? `body::after{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;background:radial-gradient(circle at center,transparent ${Math.round((1-b.vignette)*70)}%,rgba(0,0,0,${b.vignette})),linear-gradient(${c.background}00,${b.overlayColor}${Math.round(b.overlayOpacity*255).toString(16).padStart(2,"0")});}` : "";
-  return `html[data-wb-theme-forge]{color-scheme:${t.appearance === "auto" ? "normal" : t.appearance};background:${c.background}!important;}\nhtml[data-wb-theme-forge] body{--cb-bg-primary:${c.background}!important;--cb-bg-surface:${c.surface}!important;--cb-text-primary:${c.text}!important;--cb-accent:${c.primary}!important;--cb-border:${c.border}!important;--cb-vscode-editor-background:${c.background}!important;--wb-primary:${c.primary};--wb-secondary:${c.secondary};--wb-radius:${v.radius}px;--wb-shadow:${v.shadow};--wb-blur:${v.blur}px;--wb-font:${v.fontFamily};--wb-font-size:${v.fontSize}px;--wb-line-height:${v.lineHeight};--wb-transition:${motion};background:${c.background}!important;color:${c.text}!important;font-family:var(--wb-font);}\n${imageLayer}${overlayLayer}\n${t.selectors.topbar}{background:color-mix(in srgb,${c.surface} 94%,transparent)!important;border-color:${c.border}!important;}\n${t.selectors.sidebar}{background:color-mix(in srgb,${c.surface} 97%,transparent)!important;border-color:${c.border}!important;}\n${t.selectors.chat}{background:color-mix(in srgb,${c.background} ${assetUrl ? 78 : 100}%,transparent)!important;color:${c.text};font-size:var(--wb-font-size);line-height:var(--wb-line-height);}\n${t.selectors.input}{background:${c.surface}!important;color:${c.text}!important;border:1px solid ${c.border}!important;border-radius:var(--wb-radius)!important;box-shadow:0 2px 10px rgba(0,0,0,.08)!important;}\n${t.selectors.code}{background:${c.surface}!important;color:${c.secondary}!important;border-radius:calc(var(--wb-radius) - 2px);}\n${t.selectors.panel}{background:${c.surface}!important;color:${c.text}!important;border-color:${c.border}!important;border-radius:var(--wb-radius)!important;box-shadow:var(--wb-shadow)!important;}\nbutton,[role=button]{transition:background-color var(--wb-transition) ease,border-color var(--wb-transition) ease,color var(--wb-transition) ease!important;}\n${t.reducedMotion.enabled ? "*{animation:none!important;transition:none!important;scroll-behavior:auto!important;}" : ""}`;
+function selectorParts(value) {
+  return csstree.parse(value, { context: "selectorList" }).children.toArray().map((node) => csstree.generate(node));
+}
+
+function selectorGroup(values) {
+  const unique = new Set();
+  for (const value of values.flat().filter(Boolean)) for (const selector of selectorParts(value)) unique.add(selector);
+  return [...unique].join(",");
+}
+
+function scopedSelectorGroup(value, suffix = "") {
+  return selectorParts(value).map((selector) => `html[data-wb-theme-forge] ${selector}${suffix}`).join(",");
+}
+
+export function themeSelectorTargets(theme, adapter = null) {
+  const manifest = validateThemeManifest(theme);
+  const stable = adapter?.styleTargets || {};
+  return {
+    root: selectorGroup(stable.root?.length ? stable.root : ["#root"]),
+    topbar: selectorGroup([stable.topbar || [], manifest.selectors.topbar]),
+    sidebar: selectorGroup([stable.sidebar || [], manifest.selectors.sidebar]),
+    chat: selectorGroup([stable.chat || [], manifest.selectors.chat]),
+    input: selectorGroup([stable.input || [], manifest.selectors.input]),
+    code: selectorGroup([stable.code || [], manifest.selectors.code]),
+    panel: selectorGroup([stable.panel || [], manifest.selectors.panel]),
+    transparent: selectorGroup(stable.transparent || []),
+    viewportBounded: selectorGroup(stable.viewportBounded || [])
+  };
+}
+
+export function themeToCss(theme, assetUrl = "", adapter = null) {
+  const t = validateThemeManifest(theme);
+  const c = t.colors;
+  const targets = themeSelectorTargets(t, adapter);
+  const tokens = themeTokens(t, assetUrl);
+  const alpha = (value) => Math.round(value * 255).toString(16).padStart(2, "0");
+  const variableMap = [
+    `--cb-bg-primary:${c.background}!important`, `--cb-bg-secondary:${c.surface}!important`, `--cb-panel-bg-primary:${c.surface}!important`,
+    `--cb-text-primary:${c.text}!important`, `--cb-text-secondary:${c.secondary}!important`, `--cb-text-link:${c.primary}!important`,
+    `--cb-text-error-active:${c.error}!important`, `--cb-stroke-secondary:${c.border}!important`,
+    `--cb-vscode-editor-background:${c.background}!important`, `--cb-vscode-sideBar-background:${c.surface}!important`,
+    `--cb-vscode-input-background:${c.surface}!important`, `--cb-vscode-button-background:${c.primary}!important`,
+    `--vscode-editor-background:${c.background}!important`, `--vscode-sideBar-background:${c.surface}!important`,
+    `--vscode-input-background:${c.surface}!important`, `--vscode-button-background:${c.primary}!important`,
+    `--vscode-foreground:${c.text}!important`, `--vscode-errorForeground:${c.error}!important`
+  ].join(";");
+  const hasImage = Boolean(assetUrl);
+  const root = targets.root;
+  const scopedRoot = scopedSelectorGroup(root);
+  const imageLayer = hasImage ? `${scopedSelectorGroup(root, "::before")}{content:"";position:fixed;inset:calc(var(--wb-background-blur) * -2);z-index:0;pointer-events:none;background-image:var(--wb-background-image);background-size:var(--wb-background-size);background-position:var(--wb-background-position);background-repeat:no-repeat;opacity:var(--wb-background-opacity);filter:blur(var(--wb-background-blur));transform:scale(var(--wb-background-scale));transform-origin:center;}` : "";
+  const overlayLayer = hasImage ? `${scopedSelectorGroup(root, "::after")}{content:"";position:fixed;inset:0;z-index:0;pointer-events:none;background:radial-gradient(circle at center,transparent ${Math.round((1 - t.background.vignette) * 70)}%,rgba(0,0,0,var(--wb-vignette))),linear-gradient(${t.background.overlayColor}${alpha(t.background.overlayOpacity)},${t.background.overlayColor}${alpha(t.background.overlayOpacity)});}` : "";
+  const transparent = hasImage && targets.transparent ? `${scopedSelectorGroup(targets.transparent)}{background-color:transparent!important;background-image:none!important;}` : "";
+  const viewportBounds = targets.viewportBounded ? `${scopedSelectorGroup(targets.viewportBounded)}{max-height:100%!important;}` : "";
+  return `html[data-wb-theme-forge]{color-scheme:${t.appearance === "auto" ? "normal" : t.appearance};background:${c.background}!important;}\nhtml[data-wb-theme-forge] body,${scopedRoot}{${tokensToCss(tokens)};${variableMap};color:${c.text}!important;font-family:var(--wb-font)!important;font-size:var(--wb-font-size);line-height:var(--wb-line-height);}\n${scopedRoot}{position:relative;isolation:isolate;background:${c.background}!important;}\n${selectorParts(root).map((selector) => `html[data-wb-theme-forge] ${selector}>*`).join(",")}{position:relative;z-index:1;}\n${imageLayer}${overlayLayer}${transparent}${viewportBounds}\n${scopedSelectorGroup(targets.topbar)}{background:color-mix(in srgb,${c.surface} 86%,transparent)!important;border-color:${c.border}!important;backdrop-filter:blur(var(--wb-blur));}\n${scopedSelectorGroup(targets.sidebar)}{background:color-mix(in srgb,${c.surface} ${hasImage ? 82 : 96}%,transparent)!important;border-color:${c.border}!important;backdrop-filter:blur(var(--wb-blur));box-shadow:var(--wb-shadow);}\n${scopedSelectorGroup(targets.chat)}{background:color-mix(in srgb,${c.background} ${hasImage ? 74 : 100}%,transparent)!important;color:${c.text}!important;font-size:var(--wb-font-size)!important;line-height:var(--wb-line-height)!important;}\n${scopedSelectorGroup(targets.input)}{background:color-mix(in srgb,${c.surface} 90%,transparent)!important;color:${c.text}!important;border:1px solid ${c.border}!important;border-radius:var(--wb-radius)!important;box-shadow:var(--wb-shadow)!important;backdrop-filter:blur(var(--wb-blur));}\n${scopedSelectorGroup(targets.code)}{background:${c.surface}!important;color:${c.secondary}!important;border:1px solid ${c.border}!important;border-radius:max(0px,calc(var(--wb-radius) - 2px));}\n${scopedSelectorGroup(targets.panel)}{background:color-mix(in srgb,${c.surface} ${hasImage ? 84 : 98}%,transparent)!important;color:${c.text}!important;border-color:${c.border}!important;border-radius:var(--wb-radius)!important;box-shadow:var(--wb-shadow)!important;backdrop-filter:blur(var(--wb-blur));}\nhtml[data-wb-theme-forge] button,html[data-wb-theme-forge] [role=button]{border-radius:var(--wb-radius);transition:background-color var(--wb-transition) ease,border-color var(--wb-transition) ease,color var(--wb-transition) ease,transform var(--wb-transition) ease!important;}\nhtml[data-wb-theme-forge] a{color:${c.primary}!important;}\nhtml[data-wb-theme-forge] [aria-invalid=true]{--vscode-errorForeground:${c.error};color:${c.error}!important;border-color:${c.error}!important;}\n${t.reducedMotion.enabled || !t.variables.animation ? "html[data-wb-theme-forge] *{animation:none!important;transition:none!important;scroll-behavior:auto!important;}" : ""}`;
 }
