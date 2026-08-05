@@ -135,6 +135,37 @@ export async function saveTheme(manifest, css = "", { allowReplace = true } = {}
   return readThemeDir(dir, "user");
 }
 
+export async function saveThemeFromSource(sourceThemeId, manifest, css = "") {
+  const source = await getTheme(sourceThemeId);
+  const input = validateThemeManifest(manifest);
+  if (input.id !== source.manifest.id) throw new Error("theme id cannot be changed while editing");
+  if (!source.builtIn) return { theme: await saveTheme(input, css), copiedFromBuiltIn: false };
+
+  const normalizedCss = validateCustomCss(css, input);
+  const unchanged = JSON.stringify(input) === JSON.stringify(source.manifest) && normalizedCss === validateCustomCss(source.css, source.manifest);
+  if (unchanged) return { theme: source, copiedFromBuiltIn: false };
+
+  const id = await uniqueId(`${source.manifest.id}-custom`);
+  const name = input.name === source.manifest.name ? `${input.name} Copy` : input.name;
+  const originalManifest = validateThemeManifest({ ...input, id, name });
+  const normalized = normalizeManifestAssets(originalManifest);
+  const copiedCss = remapCssAssets(normalizedCss, originalManifest.assets, normalized.assets);
+  validateCustomCss(copiedCss, normalized);
+  const home = await ensureDirs();
+  const dir = userThemeDir(home, id);
+  await commitThemeDirectory(dir, async (stage) => {
+    await writeTheme(stage, normalized, copiedCss);
+    for (const [key, asset] of Object.entries(normalized.assets)) {
+      const sourceAsset = source.manifest.assets[key];
+      if (!sourceAsset) throw new Error(`missing source asset: ${key}`);
+      const target = join(stage, asset);
+      await mkdir(dirname(target), { recursive: true });
+      await atomicWrite(target, await readFile(join(source.dir, sourceAsset)));
+    }
+  });
+  return { theme: await readThemeDir(dir, "user"), copiedFromBuiltIn: true };
+}
+
 export async function deleteTheme(id) {
   assertThemeId(id);
   if ((await scanRoot(builtinRoot, "builtin")).some((theme) => theme.manifest.id === id)) throw new Error("built-in themes cannot be deleted");
