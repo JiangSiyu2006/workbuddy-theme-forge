@@ -2,11 +2,31 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
-test("Windows launcher requires explicit restart confirmation", async () => {
+test("Windows launcher always starts a managed WorkBuddy instance after explicit confirmation", async () => {
   const script = await readFile("scripts/start-control.ps1", "utf8");
+  const waiter = await readFile("scripts/wait-cdp.mjs", "utf8");
   assert.match(script, /Type YES to confirm/);
   assert.match(script, /if \(\$answer -cne 'YES'\)/);
-  assert.doesNotMatch(script, /Stop-Process -Force/);
+  assert.match(script, /Start WorkBuddy and open Theme Forge now\?/);
+  assert.match(script, /Restart WorkBuddy and open Theme Forge now\?/);
+  assert.match(script, /\$workBuddyRunning/);
+  assert.doesNotMatch(script, /\| Stop-Process/);
+  assert.doesNotMatch(script, /Resolve-ExistingCdp/);
+  assert.doesNotMatch(script, /resolve-cdp\.mjs/);
+  assert.match(script, /CloseMainWindow/);
+  assert.match(script, /Stop-Process -Id \$process\.Id -Force/);
+  assert.match(script, /function Stop-WorkBuddyForRestart/);
+  assert.ok(script.indexOf("CloseMainWindow") < script.indexOf("Stop-Process -Id $process.Id -Force"));
+  assert.ok(script.indexOf("if ($answer -cne 'YES')") < script.indexOf("Start-Process -FilePath $exe"));
   assert.match(script, /ValidateRange\(1024,65535\)/);
   assert.match(script, /Get-NetTCPConnection -State Listen/);
+  assert.match(script, /wait-cdp\.mjs/);
+  assert.match(script, /--remote-debugging-address=127\.0\.0\.1/);
+  assert.match(script, /Get-FreeCdpPort/);
+  assert.match(script, /managed-start/);
+  assert.match(script, /managed-restart/);
+  assert.match(script, /--owner-verified/);
+  assert.match(waiter, /discoverVerifiedTargets\(port, \{ ownerVerified: true \}\)/);
+  assert.doesNotMatch(waiter, /resolveCdpEndpoint/);
+  assert.doesNotMatch(waiter, /console\.error/);
 });
