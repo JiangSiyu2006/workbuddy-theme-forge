@@ -1,6 +1,6 @@
 {
   "name": "workbuddy-theme-forge",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "description": "A reversible, non-invasive WorkBuddy theme engine over local Chromium CDP.",
   "type": "module",
@@ -9,10 +9,10 @@
   },
   "scripts": {
     "start:editor": "node apps/editor/server.mjs --open",
-    "start:control": "node src/cli.mjs serve --open",
+    "start:control": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-control.ps1 -OpenBrowser",
     "test": "node --test",
     "test:coverage": "node --test --experimental-test-coverage",
-    "lint": "node --check src/cli.mjs && node --check apps/editor/server.mjs && node --check src/theme-store.mjs && node --check src/injector.mjs",
+    "lint": "node scripts/check-syntax.mjs",
     "doctor": "node src/cli.mjs doctor"
   },
   "engines": {
@@ -24,9 +24,8 @@
     "image-size": "^2.0.2",
     "semver": "^7.7.2",
     "yauzl": "^3.4.0",
-    "yazl": "^3.3.1"
-  },
-  "devDependencies": {
+    "yazl": "^3.3.1",
     "ws": "^8.21.1"
-  }
+  },
+  "devDependencies": {}
 }
