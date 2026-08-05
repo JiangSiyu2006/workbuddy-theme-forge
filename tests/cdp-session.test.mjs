@@ -34,5 +34,27 @@ test("CDP command times out when the renderer does not answer", async () => {
   }
   const session = await new CdpSession("ws://127.0.0.1:9223/devtools/test", { WebSocketImpl: SilentSocket, timeoutMs: 10 }).connect();
   await assert.rejects(() => session.command("Runtime.evaluate"), /timed out/);
+  assert.equal(session.pending.size, 0);
+  session.close();
+});
+
+test("CDP connection timeout closes the socket and clears the session", async () => {
+  let closed = false;
+  class NeverSocket { close() { closed = true; } }
+  const session = new CdpSession("ws://127.0.0.1:9223/devtools/test", { WebSocketImpl: NeverSocket, timeoutMs: 10 });
+  await assert.rejects(() => session.connect(), /connection timeout/);
+  assert.equal(closed, true);
+  assert.equal(session.socket, null);
+});
+
+test("synchronous WebSocket send failures clear pending commands", async () => {
+  class BrokenSocket {
+    constructor() { queueMicrotask(() => this.onopen?.()); }
+    send() { throw new Error("send failed"); }
+    close() { this.onclose?.(); }
+  }
+  const session = await new CdpSession("ws://127.0.0.1:9223/devtools/test", { WebSocketImpl: BrokenSocket }).connect();
+  await assert.rejects(() => session.command("Runtime.evaluate"), /send failed/);
+  assert.equal(session.pending.size, 0);
   session.close();
 });
